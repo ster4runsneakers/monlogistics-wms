@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MonLogistics - Διαχείριση Αποθήκης & QR Pallets MVP</title>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- QRCode.js library CDN with inline fallback -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- HTML5 Qrcode Scanner CDN -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">
+          <i data-lucide="package-check"></i>
+        </div>
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h1 class="brand-title">MonLogistics</h1>
+            <span class="brand-badge">WMS MVP</span>
+          </div>
+          <p style="font-size: 0.75rem; color: var(--text-muted);">Διαχείριση Παλετών & Θέσεων Ραφιών</p>
+        </div>
+      </div>
+
+      <!-- Live Counters -->
+      <div class="stats-bar">
+        <div class="stat-chip">
+          <i data-lucide="boxes" style="width: 14px; color: #818cf8;"></i>
+          <span>Παλέτες:</span>
+          <span class="val" id="statTotalPallets">0</span>
+        </div>
+        <div class="stat-chip">
+          <i data-lucide="map-pin" style="width: 14px; color: #34d399;"></i>
+          <span>Σε Ράφι:</span>
+          <span class="val" id="statAssignedPallets" style="color: var(--emerald);">0</span>
+        </div>
+        <div class="stat-chip">
+          <i data-lucide="alert-circle" style="width: 14px; color: #fbbf24;"></i>
+          <span>Εκτός Ραφιού:</span>
+          <span class="val" id="statUnassignedPallets" style="color: var(--amber);">0</span>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs">
+        <button class="nav-tab active" onclick="switchTab('tab-generate')">
+          <i data-lucide="qr-code" style="width: 18px;"></i>
+          <span>1. Παραγωγή QR</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-link')">
+          <i data-lucide="scan-line" style="width: 18px;"></i>
+          <span>2. Σύνδεση με Ράφι</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-inventory')">
+          <i data-lucide="search" style="width: 18px;"></i>
+          <span>3. Αναζήτηση</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-shelves')">
+          <i data-lucide="layers" style="width: 18px;"></i>
+          <span>4. Ετικέτες Ραφιών</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+
+    <!-- TAB 1: GENERATE PALLET QR CODE -->
+    <section id="tab-generate" class="tab-content active">
+      <div class="grid-2col">
+        
+        <!-- Form Panel -->
+        <div class="glass-card">
+          <h2 class="card-title">
+            <i data-lucide="plus-circle" style="color: var(--primary);"></i>
+            Νέα Παλέτα & Παραγωγή QR
+          </h2>
+          <p class="card-desc">Πληκτρολογήστε τα στοιχεία της παλέτας για να παραχθεί το μοναδικό QR Code εκτύπωσης.</p>
+
+          <form id="createPalletForm" onsubmit="handleCreatePallet(event)">
+            <div class="form-group">
+              <label class="form-label" for="customerName">Όνομα Πελάτη *</label>
+              <input type="text" id="customerName" class="form-input" placeholder="π.χ. ΑΛΦΑ Α.Ε. / Papadopoulos Ltd" required autofocus>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="palletId">Αριθμός Παλέτας *</label>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="palletId" class="form-input" placeholder="π.χ. PL-1001" required>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="generateAutoPalletId()" title="Αυτόματος Αριθμός">
+                  <i data-lucide="sparkles" style="width: 16px;"></i>
+                </button>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+              <button type="submit" class="btn btn-primary btn-full">
+                <i data-lucide="qr-code"></i>
+                Δημιουργία QR & Ετικέτας
+              </button>
+            </div>
+          </form>
+
+          <!-- Quick Seed helper -->
+          <div class="quick-sim-box" style="margin-top: 2rem;">
+            <div class="quick-sim-title">Γρήγορη Δοκιμή (Demo Data)</div>
+            <div class="sim-buttons">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="quickFillPallet('ΔΗΜΗΤΡΙΟΥ Α.Ε.', 'PL-8820')">
+                + ΔΗΜΗΤΡΙΟΥ Α.Ε. (PL-8820)
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="quickFillPallet('OLYMPIC LOGISTICS', 'PL-4410')">
+                + OLYMPIC (PL-4410)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Label Preview Panel -->
+        <div class="glass-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <h2 class="card-title">
+              <i data-lucide="printer" style="color: var(--emerald);"></i>
+              Προεπισκόπηση Ετικέτας
+            </h2>
+            <p class="card-desc">Αυτή η ετικέτα μπορεί να τυπωθεί και να κολληθεί απευθείας στην παλέτα.</p>
+          </div>
+
+          <div class="label-preview-wrapper" id="labelPreviewWrapper">
+            <!-- Rendered Pallet Label -->
+            <div class="pallet-label" id="printableLabel">
+              <div class="label-header">
+                <span class="label-company">MONLOGISTICS WMS</span>
+                <span class="label-tag">PALLET ID</span>
+              </div>
+
+              <div class="label-details">
+                <div class="label-field">
+                  <div class="label-field-title">ΠΕΛΑΤΗΣ</div>
+                  <div class="label-field-value" id="previewCustomer">ΕΠΙΛΕΞΤΕ ΠΕΛΑΤΗ</div>
+                </div>
+                <div class="label-field">
+                  <div class="label-field-title">ΑΡΙΘΜΟΣ ΠΑΛΕΤΑΣ</div>
+                  <div class="label-field-value" id="previewPalletId">PL-XXXX</div>
+                </div>
+              </div>
+
+              <div class="label-qr" id="qrcodeCanvas"></div>
+
+              <div class="label-footer" id="previewDate">
+                Ημ/νία: --/--/----
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+            <button type="button" class="btn btn-emerald btn-full" onclick="printActiveLabel()" id="btnPrintLabel">
+              <i data-lucide="printer"></i>
+              Εκτύπωση Ετικέτας
+            </button>
+            <button type="button" class="btn btn-secondary btn-full" onclick="goToLinkWithCurrentPallet()" id="btnGoToLink">
+              <i data-lucide="arrow-right"></i>
+              Σύνδεση σε Ράφι
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 2: LINK PALLET TO SHELF -->
+    <section id="tab-link" class="tab-content">
+      <div class="grid-2col">
+        
+        <!-- Left: Scan / Select Steps -->
+        <div class="glass-card">
+          <h2 class="card-title">
+            <i data-lucide="scan-line" style="color: var(--primary);"></i>
+            Σύνδεση Παλέτας με Ράφι
+          </h2>
+          <p class="card-desc">Σκανάρετε πρώτα το QR της παλέτας και μετά το QR από το ταμπελάκι του ραφιού (π.χ. Α-14).</p>
+
+          <div class="scanner-flow">
+            <!-- Step Indicators -->
+            <div class="step-cards">
+              <!-- Step 1 Card -->
+              <div class="step-card active" id="stepCardPallet">
+                <div class="step-num">1</div>
+                <div class="step-title">QR Παλέτας</div>
+                <div class="step-val" id="stepValPallet">Εκκρεμεί Σάρωση</div>
+              </div>
+              <!-- Step 2 Card -->
+              <div class="step-card" id="stepCardShelf">
+                <div class="step-num">2</div>
+                <div class="step-title">QR Θέσης Ραφιού</div>
+                <div class="step-val" id="stepValShelf">Εκκρεμεί Σάρωση</div>
+              </div>
+            </div>
+
+            <!-- Active Scan Controls -->
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <button type="button" class="btn btn-primary btn-sm" onclick="toggleCameraScanner()">
+                <i data-lucide="camera"></i>
+                <span id="btnCamText">Ενεργοποίηση Κάμερας</span>
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="resetLinkSteps()">
+                <i data-lucide="rotate-ccw"></i>
+                Επανεκκίνηση
+              </button>
+            </div>
+
+            <!-- Camera Scanner Viewport -->
+            <div id="cameraScannerContainer" class="scanner-viewport-box" style="display: none;">
+              <div id="reader"></div>
+              <div class="scanner-overlay">
+                <div class="scan-region-box"></div>
+              </div>
+            </div>
+
+            <!-- Quick Simulator Controls (Easy testing without camera) -->
+            <div class="quick-sim-box">
+              <div class="quick-sim-title">⚡ Γρήγορος Προσομοιωτής Σάρωσης (Quick Test)</div>
+              
+              <div style="margin-bottom: 0.75rem;">
+                <label class="form-label" style="font-size: 0.75rem;">1. Επιλογή Παλέτας:</label>
+                <select id="simPalletSelect" class="form-select" onchange="simulatePalletScan(this.value)">
+                  <option value="">-- Επιλέξτε Παλέτα --</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="form-label" style="font-size: 0.75rem;">2. Σάρωση / Επιλογή Θέσης Ραφιού:</label>
+                <div class="sim-buttons" id="simShelfButtons">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Α-14')">📍 Α-14</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Α-15')">📍 Α-15</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Β-02')">📍 Β-02</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Β-08')">📍 Β-08</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Γ-01')">📍 Γ-01</button>
+                </div>
+              </div>
+            </div>
+
+            <button type="button" class="btn btn-emerald btn-full" id="btnConfirmPair" onclick="confirmPairing()" disabled style="margin-top: 1rem;">
+              <i data-lucide="check-circle-2"></i>
+              Επιβεβαίωση & Αποθήκευση Σύνδεσης
+            </button>
+          </div>
+        </div>
+
+        <!-- Right: Current Link Status / Last Activity -->
+        <div class="glass-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <h2 class="card-title">
+              <i data-lucide="link" style="color: var(--emerald);"></i>
+              Κατάσταση Σύνδεσης
+            </h2>
+            <p class="card-desc">Επισκόπηση της επιλεγμένης αντιστοίχισης πριν την αποθήκευση.</p>
+
+            <div style="background: rgba(15, 23, 42, 0.6); padding: 1.5rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+              <div style="margin-bottom: 1.25rem;">
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Στοιχεία Παλέτας</span>
+                <div style="font-size: 1.2rem; font-weight: 800; color: var(--text-main);" id="statusPalletDisplay">Δεν έχει επιλεγεί</div>
+                <div style="font-size: 0.9rem; color: var(--text-muted);" id="statusCustomerDisplay">-</div>
+              </div>
+
+              <div style="border-top: 1px dashed var(--border-color); padding-top: 1.25rem;">
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Συνδεδεμένη Θέση Ραφιού</span>
+                <div style="margin-top: 0.4rem;">
+                  <span id="statusShelfDisplay" class="badge-unassigned">⚠️ Καμία Θέση</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recently Linked List -->
+          <div style="margin-top: 2rem;">
+            <h3 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text-main);">
+              🕒 Τελευταίες Συνδέσεις
+            </h3>
+            <div id="recentPairsList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+              <div style="font-size: 0.85rem; color: var(--text-dim);">Δεν υπάρχουν πρόσφατες συνδέσεις.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 3: SEARCH & INVENTORY TABLE -->
+    <section id="tab-inventory" class="tab-content">
+      <div class="glass-card">
+        
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+          <div>
+            <h2 class="card-title">
+              <i data-lucide="database" style="color: var(--primary);"></i>
+              Αναζήτηση & Πίνακας Αποθέματος
+            </h2>
+            <p class="card-desc">Πληκτρολογήστε το Όνομα Πελάτη, τον Αριθμό Παλέτας ή τη Θέση Ραφιού.</p>
+          </div>
+
+          <button class="btn btn-secondary btn-sm" onclick="seedSampleData()">
+            <i data-lucide="database-backup"></i>
+            Προσθήκη Δείγματος Δεδομένων
+          </button>
+        </div>
+
+        <!-- Search Bar & Filters -->
+        <div class="search-header">
+          <div class="search-input-wrapper">
+            <i data-lucide="search" class="search-icon"></i>
+            <input type="text" id="searchInput" class="form-input" placeholder="Αναζήτηση με Πελάτη, Παλέτα (PL-...) ή Θέση (Α-14)..." oninput="filterInventoryTable()">
+          </div>
+
+          <select id="filterStatusSelect" class="form-select" style="width: auto; min-width: 180px;" onchange="filterInventoryTable()">
+            <option value="ALL">Όλες οι Παλέτες</option>
+            <option value="ASSIGNED">Συνδεδεμένες σε Ράφι</option>
+            <option value="UNASSIGNED">Μη Τοποθετημένες</option>
+          </select>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-wrapper">
+          <table class="inventory-table">
+            <thead>
+              <tr>
+                <th>Όνομα Πελάτη</th>
+                <th>Αριθμός Παλέτας</th>
+                <th>Θέση Ραφιού</th>
+                <th>Ημ/νία Καταγραφής</th>
+                <th style="text-align: right;">Ενέργειες</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryTableBody">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 4: SHELF QR TAG GENERATOR -->
+    <section id="tab-shelves" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title">
+          <i data-lucide="layers" style="color: var(--primary);"></i>
+          Δημιουργία Ετικετών Ραφιών (Shelf QR Tags)
+        </h2>
+        <p class="card-desc">Δημιουργήστε και τυπώστε QR codes για τα ράφια της αποθήκης σας.</p>
+
+        <div style="display: flex; gap: 1rem; margin-bottom: 2rem; align-items: flex-end; flex-wrap: wrap;">
+          <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
+            <label class="form-label">Διάδρομος (Zone)</label>
+            <input type="text" id="shelfZoneInput" class="form-input" value="Α">
+          </div>
+          <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
+            <label class="form-label">Από Θέση</label>
+            <input type="number" id="shelfFromInput" class="form-input" value="1">
+          </div>
+          <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
+            <label class="form-label">Έως Θέση</label>
+            <input type="number" id="shelfToInput" class="form-input" value="10">
+          </div>
+          <button class="btn btn-primary" onclick="generateShelfGrid()">
+            <i data-lucide="refresh-cw"></i>
+            Παραγωγή Ετικετών
+          </button>
+          <button class="btn btn-emerald" onclick="window.print()">
+            <i data-lucide="printer"></i>
+            Εκτύπωση Όλων των Ετικετών
+          </button>
+        </div>
+
+        <!-- Grid of Shelf Tags -->
+        <div id="shelfTagGrid" class="shelf-grid">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Area used for Clean Printing -->
+  <div id="printArea" style="display: none;"></div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- App Script -->
+  <script src="app.js"></script>
+</body>
+</html>
