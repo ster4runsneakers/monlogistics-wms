@@ -163,10 +163,15 @@ function handleCreatePallet(e) {
 
   savePalletsToStorage();
   renderInventoryTable();
-  
-  // Render label
-  renderPalletLabel(palletObj);
   activePalletForLabel = palletObj;
+
+  // Render label (QR must never block create/update success)
+  try {
+    renderPalletLabel(palletObj);
+  } catch (err) {
+    console.error('Pallet label render failed:', err);
+    showToast('Η παλέτα αποθηκεύτηκε, αλλά η ετικέτα QR απέτυχε. Δοκιμάστε ξανά την εκτύπωση.', 'error');
+  }
 
   // Prepare next auto ID for next creation
   generateAutoPalletId();
@@ -181,31 +186,10 @@ function renderPalletLabel(pallet) {
   });
   document.getElementById('previewDate').innerText = `Ημ/νία: ${dateFormatted}`;
 
-  // Clear QR Container
   const qrContainer = document.getElementById('qrcodeCanvas');
-  qrContainer.innerHTML = '';
-
-  // QR Payload: JSON containing Pallet metadata
-  const payload = JSON.stringify({
-    type: 'PALLET',
-    id: pallet.id,
-    customer: pallet.customer
-  });
-
-  // Render QR Code using QRCode library or fallback canvas
-  if (window.QRCode) {
-    new QRCode(qrContainer, {
-      text: payload,
-      width: 140,
-      height: 140,
-      colorDark: "#000000",
-      colorLight: "#ffffff",
-      correctLevel: QRCode.CorrectLevel.H
-    });
-  } else {
-    // Fallback simple Canvas rendering if library missing
-    renderFallbackQR(qrContainer, payload);
-  }
+  // Compact payload — never embed long customer names (causes QR code length overflow)
+  const payload = `PALLET:${pallet.id}`;
+  renderQRCode(qrContainer, payload, 140);
 }
 
 function printActiveLabel() {
@@ -524,10 +508,13 @@ function onQrScanned(text) {
     // Plain text payload parsing
   }
 
-  // Handle plain text like "PL-1001" or "A-14" or "SHELF:A-14"
+  // Handle plain text like "PL-1001", "PALLET:PL-1001", "A-14", or "SHELF:A-14"
   if (text.startsWith('SHELF:')) {
     const shelf = text.replace('SHELF:', '').trim();
     simulateShelfScan(shelf);
+  } else if (text.startsWith('PALLET:')) {
+    const palletId = text.replace('PALLET:', '').trim();
+    simulatePalletScan(palletId);
   } else if (!scanStepPallet) {
     // If step 1 not done, treat scan as Pallet ID
     simulatePalletScan(text);
@@ -672,9 +659,13 @@ function generateShelfGrid() {
   shelfGridTimeouts = [];
   const generation = ++shelfGridGeneration;
 
-  const zone = document.getElementById('shelfZoneInput').value.trim().toUpperCase() || 'Α';
-  const from = parseInt(document.getElementById('shelfFromInput').value) || 1;
-  const to = parseInt(document.getElementById('shelfToInput').value) || 10;
+  const shelfZoneInput = document.getElementById('shelfZoneInput');
+  const shelfFromInput = document.getElementById('shelfFromInput');
+  const shelfToInput = document.getElementById('shelfToInput');
+
+  const zone = (shelfZoneInput && shelfZoneInput.value ? shelfZoneInput.value.trim().toUpperCase() : '') || 'Α';
+  const from = parseInt(shelfFromInput && shelfFromInput.value, 10) || 1;
+  const to = parseInt(shelfToInput && shelfToInput.value, 10) || 10;
 
   grid.innerHTML = '';
 
@@ -698,17 +689,7 @@ function generateShelfGrid() {
       if (generation !== shelfGridGeneration) return;
       const target = document.getElementById(qrId);
       if (target) {
-        if (window.QRCode) {
-          new QRCode(target, {
-            text: `SHELF:${shelfCode}`,
-            width: 110,
-            height: 110,
-            colorDark: "#000000",
-            colorLight: "#ffffff"
-          });
-        } else {
-          renderFallbackQR(target, `SHELF:${shelfCode}`);
-        }
+        renderQRCode(target, `SHELF:${shelfCode}`, 110);
       }
     }, 50);
     shelfGridTimeouts.push(tid);
@@ -796,6 +777,35 @@ function escapeHtml(str) {
       "'": '&#039;'
     }[m];
   });
+}
+
+/**
+ * Safe QR renderer — never throws; falls back on any library/overflow error.
+ */
+function renderQRCode(container, text, size) {
+  if (!container) return;
+  container.innerHTML = '';
+  const qrSize = size || 140;
+
+  if (!window.QRCode) {
+    renderFallbackQR(container, text);
+    return;
+  }
+
+  try {
+    new QRCode(container, {
+      text: text,
+      width: qrSize,
+      height: qrSize,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  } catch (err) {
+    console.error('QRCode render failed, using fallback:', err);
+    container.innerHTML = '';
+    renderFallbackQR(container, text);
+  }
 }
 
 function renderFallbackQR(container, text) {
