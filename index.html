@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=loc1">
+  <link rel="stylesheet" href="styles.css?v=pick1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -59,6 +59,11 @@
           <i data-lucide="layers" style="width: 18px;"></i>
           <span class="nav-label-full">4. Ετικέτες Ραφιών</span>
           <span class="nav-label-short">4. Ετικέτες</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-picking')">
+          <i data-lucide="clipboard-list" style="width: 18px;"></i>
+          <span class="nav-label-full">5. Picking</span>
+          <span class="nav-label-short">5. Pick</span>
         </button>
       </nav>
 
@@ -450,6 +455,74 @@
       </div>
     </section>
 
+
+    <!-- TAB 5: PICKING -->
+    <section id="tab-picking" class="tab-content">
+      <div class="pick-layout">
+
+        <!-- New pick list -->
+        <div class="glass-card pick-new-card">
+          <h2 class="card-title">
+            <i data-lucide="clipboard-plus" style="color: var(--primary);"></i>
+            Νέα λίστα picking
+          </h2>
+          <p class="card-desc">Γραμμές παραγγελίας (προϊόν + ποσότητα) — όχι εξαγωγή ολόκληρης παλέτας.</p>
+
+          <div class="form-group">
+            <label class="form-label" for="pickCustomerInput">Πελάτης *</label>
+            <input type="text" id="pickCustomerInput" class="form-input" placeholder="Όνομα πελάτη" autocomplete="organization">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pickOrderRefInput">Αρ. παραγγελίας *</label>
+            <input type="text" id="pickOrderRefInput" class="form-input" placeholder="π.χ. ORD-1024">
+          </div>
+
+          <label class="form-label">Γραμμές προϊόντων</label>
+          <div id="pickLineRows" class="pick-line-rows"></div>
+          <div class="pick-line-actions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addPickLineRow()">
+              <i data-lucide="plus" style="width: 14px;"></i>
+              Προσθήκη γραμμής
+            </button>
+            <button type="button" class="btn btn-primary" onclick="createPickList()">
+              <i data-lucide="check" style="width: 14px;"></i>
+              Δημιουργία
+            </button>
+          </div>
+        </div>
+
+        <!-- Open lists -->
+        <div class="glass-card pick-open-card">
+          <h2 class="card-title">
+            <i data-lucide="list" style="color: var(--emerald);"></i>
+            Ανοιχτές λίστες
+          </h2>
+          <p class="card-desc">Ανοιχτές / σε εξέλιξη — πατήστε για λεπτομέρεια.</p>
+          <div id="pickOpenLists" class="pick-open-lists">
+            <!-- rendered -->
+          </div>
+        </div>
+
+        <!-- Detail -->
+        <div class="glass-card pick-detail-card" id="pickDetailCard" hidden>
+          <div class="pick-detail-header">
+            <h2 class="card-title" style="margin-bottom: 0;">
+              <i data-lucide="package-open" style="color: var(--amber);"></i>
+              <span id="pickDetailTitle">Λεπτομέρεια λίστας</span>
+            </h2>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="closePickDetail()">
+              <i data-lucide="x" style="width: 14px;"></i>
+              Κλείσιμο
+            </button>
+          </div>
+          <p class="card-desc" id="pickDetailMeta" style="margin-top: 0.75rem;"></p>
+          <div id="pickDetailLines" class="pick-detail-lines"></div>
+          <div class="pick-detail-footer" id="pickDetailFooter"></div>
+        </div>
+
+      </div>
+    </section>
+
   </main>
 
   <!-- Area used for Clean Printing -->
@@ -486,6 +559,30 @@
     </div>
   </div>
 
+
+  <!-- Pick confirm modal -->
+  <div id="pickModal" class="modal-overlay" hidden aria-hidden="true">
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pickModalTitle">
+      <div class="modal-header">
+        <h3 id="pickModalTitle">Επιβεβαίωση picking</h3>
+        <button type="button" class="modal-close" onclick="closePickModal()" aria-label="Κλείσιμο">&times;</button>
+      </div>
+      <p class="modal-sub" id="pickModalSub"></p>
+      <div id="pickModalCandidates" class="pick-modal-candidates"></div>
+      <div class="form-group" id="pickModalQtyGroup">
+        <label class="form-label" for="pickQtyInput">Ποσότητα προς picking *</label>
+        <input type="number" id="pickQtyInput" class="form-input" min="0.01" step="any" inputmode="decimal" placeholder="Ποσότητα">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closePickModal()">Ακύρωση</button>
+        <button type="button" class="btn btn-primary btn-pick-confirm" onclick="submitPickConfirm()">
+          <i data-lucide="check-circle" style="width: 16px;"></i>
+          Επιβεβαίωση picking
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
@@ -493,7 +590,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js?v=fb1"></script>
-  <!-- cache-bust: ship1 -->
-  <script src="app.js?v=loc1"></script>
+  <!-- cache-bust: pick1 -->
+  <script src="app.js?v=pick1"></script>
 </body>
 </html>

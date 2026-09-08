@@ -26,6 +26,15 @@ let shelfGridGeneration = 0;
 let inventoryDelegatedBound = false;
 let shelfTagDelegatedBound = false;
 
+// Pick lists state
+const PICKLISTS_KEY = 'monlog_picklists_v1';
+let pickLists = [];
+let activePickListId = null;
+let firestorePickUnsub = null;
+let applyingPickRemoteSnapshot = false;
+let pendingPickContext = null; // { listId, lineId, palletId, available, expiry }
+let pickModalDelegatedBound = false;
+
 // Firebase / sync state
 let cloudEnabled = false;
 let db = null;
@@ -36,6 +45,7 @@ let firebaseFallbackToastShown = false;
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
   loadPalletsFromStorage();
+  loadPickListsFromStorage();
   const usingCloud = initFirebaseSync();
 
   // Initialize Lucide Icons if available
@@ -52,10 +62,12 @@ document.addEventListener('DOMContentLoaded', () => {
   populateSimulators();
   updateLinkUI();
   generateShelfGrid();
+  initPickTabUI();
 
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
   bindShipModalChrome();
+  bindPickModalChrome();
   bindShelfTagPrintActions();
   bindScanFileFallback();
 
@@ -229,6 +241,7 @@ function subscribePallets() {
     renderInventoryTable();
     updateStats();
     populateSimulators();
+    renderPickTab();
     setSyncStatus("online");
     applyingRemoteSnapshot = false;
   }, (err) => {
@@ -259,6 +272,7 @@ function initFirebaseSync() {
     db = firebase.firestore();
     cloudEnabled = true;
     subscribePallets();
+    subscribePickLists();
     return true;
   } catch (e) {
     console.error("Firebase init failed:", e);
@@ -351,6 +365,10 @@ function switchTab(tabId) {
   );
   if (activeBtn) {
     activeBtn.classList.add('active');
+  }
+
+  if (tabId === 'tab-picking') {
+    renderPickTab();
   }
 
   // Re-create icons for freshly visible tab elements
@@ -1800,6 +1818,855 @@ function seedSampleData(notify = true) {
     showToast(`Προστέθηκαν ${addedIds.length} δείγματα παλετών με επιτυχία!`, 'success');
   }
 }
+
+/* ==========================================================================
+   TAB 5: PICKING (order lines + FEFO suggestions)
+   ========================================================================== */
+
+function generatePickListId() {
+  const n = Math.floor(1000 + Math.random() * 9000);
+  let id = `PLK-${n}`;
+  let guard = 0;
+  while (pickLists.some((x) => x.id === id) && guard < 50) {
+    id = `PLK-${Math.floor(1000 + Math.random() * 9000)}`;
+    guard += 1;
+  }
+  return id;
+}
+
+function generatePickLineId() {
+  return `ln-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`;
+}
+
+function itemNameMatches(itemName, productName) {
+  const a = String(itemName || '').trim().toLowerCase();
+  const b = String(productName || '').trim().toLowerCase();
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+function locationTypeLabel(type) {
+  if (type === 'aisle') return 'Διάδρομος';
+  if (type === 'shelf') return 'Ράφι';
+  return 'Θέση';
+}
+
+function pickStatusLabel(status) {
+  const map = {
+    open: 'Ανοιχτή',
+    in_progress: 'Σε εξέλιξη',
+    done: 'Ολοκληρωμένη',
+    cancelled: 'Ακυρωμένη',
+    pending: 'Εκκρεμεί'
+  };
+  return map[status] || status;
+}
+
+function normalizePickList(raw) {
+  const p = raw && typeof raw === 'object' ? raw : {};
+  const linesIn = Array.isArray(p.lines) ? p.lines : [];
+  const lines = linesIn.map((ln, idx) => {
+    const allocations = Array.isArray(ln && ln.allocations) ? ln.allocations.map((a) => ({
+      palletId: a && a.palletId != null ? String(a.palletId) : '',
+      locationCode: a && a.locationCode != null ? a.locationCode : null,
+      qty: Number(a && a.qty),
+      at: a && a.at ? String(a.at) : new Date().toISOString(),
+      expiry: a && a.expiry != null && a.expiry !== '' ? String(a.expiry) : null
+    })).filter((a) => a.palletId && Number.isFinite(a.qty)) : [];
+    const qtyNeeded = Number(ln && ln.qtyNeeded);
+    const qtyPicked = Number(ln && ln.qtyPicked);
+    const needed = Number.isFinite(qtyNeeded) ? qtyNeeded : 0;
+    const picked = Number.isFinite(qtyPicked) ? qtyPicked : 0;
+    let status = (ln && ln.status === 'done') ? 'done' : 'pending';
+    if (picked >= needed && needed > 0) status = 'done';
+    return {
+      id: (ln && ln.id) ? String(ln.id) : `ln-${idx}-${generatePickLineId()}`,
+      productName: String((ln && ln.productName) || '').trim(),
+      qtyNeeded: needed,
+      qtyPicked: picked,
+      status,
+      allocations
+    };
+  }).filter((ln) => ln.productName);
+
+  let status = p.status;
+  if (status !== 'open' && status !== 'in_progress' && status !== 'done' && status !== 'cancelled') {
+    status = 'open';
+  }
+  if (status !== 'cancelled' && lines.length > 0 && lines.every((ln) => ln.qtyPicked >= ln.qtyNeeded && ln.qtyNeeded > 0)) {
+    status = 'done';
+  } else if (status !== 'cancelled' && status !== 'done' && lines.some((ln) => ln.qtyPicked > 0)) {
+    status = 'in_progress';
+  }
+
+  return {
+    id: p.id ? String(p.id) : generatePickListId(),
+    customer: String(p.customer || '').trim(),
+    orderRef: String(p.orderRef || '').trim(),
+    status,
+    createdAt: p.createdAt || new Date().toISOString(),
+    updatedAt: p.updatedAt || p.createdAt || new Date().toISOString(),
+    lines
+  };
+}
+
+function pickListToFirestoreDoc(pl) {
+  const n = normalizePickList(pl);
+  return {
+    customer: n.customer,
+    orderRef: n.orderRef,
+    status: n.status,
+    createdAt: n.createdAt,
+    updatedAt: n.updatedAt,
+    lines: n.lines
+  };
+}
+
+function sortPickListsByUpdatedDesc(list) {
+  return (list || []).slice().sort((a, b) => {
+    const ta = a.updatedAt || a.createdAt || '';
+    const tb = b.updatedAt || b.createdAt || '';
+    return tb.localeCompare(ta);
+  });
+}
+
+function mirrorPickListsToLocalCache() {
+  try {
+    localStorage.setItem(PICKLISTS_KEY, JSON.stringify(pickLists));
+  } catch (e) {
+    console.error('Failed to mirror pickLists to localStorage:', e);
+  }
+}
+
+function loadPickListsFromStorage() {
+  try {
+    const raw = localStorage.getItem(PICKLISTS_KEY);
+    if (!raw) {
+      pickLists = [];
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      localStorage.removeItem(PICKLISTS_KEY);
+      pickLists = [];
+      return;
+    }
+    pickLists = sortPickListsByUpdatedDesc(parsed.map(normalizePickList));
+  } catch (e) {
+    console.error('Failed to load pickLists:', e);
+    pickLists = [];
+  }
+}
+
+function subscribePickLists() {
+  if (!db) return;
+  if (typeof firestorePickUnsub === 'function') {
+    try { firestorePickUnsub(); } catch (_) {}
+    firestorePickUnsub = null;
+  }
+  firestorePickUnsub = db.collection('pickLists').onSnapshot((snap) => {
+    applyingPickRemoteSnapshot = true;
+    const next = [];
+    snap.forEach((d) => {
+      const data = d.data() || {};
+      next.push(normalizePickList({ id: d.id, ...data }));
+    });
+    pickLists = sortPickListsByUpdatedDesc(next);
+    mirrorPickListsToLocalCache();
+    renderPickTab();
+    applyingPickRemoteSnapshot = false;
+  }, (err) => {
+    console.error('Firestore pickLists onSnapshot error:', err);
+    toastFirebaseFallback('Σφάλμα συγχρονισμού pick lists — τοπική λειτουργία.');
+  });
+}
+
+function upsertPickListsToCloud(ids) {
+  if (!cloudEnabled || !db || applyingPickRemoteSnapshot) return;
+  const unique = Array.from(new Set((ids || []).filter(Boolean)));
+  unique.forEach((id) => {
+    const pl = pickLists.find((x) => x.id === id);
+    if (!pl) return;
+    db.collection('pickLists').doc(id).set(pickListToFirestoreDoc(pl), { merge: true }).catch((err) => {
+      console.error('Firestore pickLists set failed:', id, err);
+      setSyncStatus('error');
+    });
+  });
+}
+
+function deletePickListsFromCloud(ids) {
+  if (!cloudEnabled || !db || applyingPickRemoteSnapshot) return;
+  const unique = Array.from(new Set((ids || []).filter(Boolean)));
+  unique.forEach((id) => {
+    db.collection('pickLists').doc(id).delete().catch((err) => {
+      console.error('Firestore pickLists delete failed:', id, err);
+      setSyncStatus('error');
+    });
+  });
+}
+
+/**
+ * Persist pick lists. options: { upsertIds?: string[], deleteIds?: string[] }
+ */
+function savePickListsToStorage(options) {
+  const opts = options || {};
+  mirrorPickListsToLocalCache();
+  if (cloudEnabled && db && !applyingPickRemoteSnapshot) {
+    const hasDelete = Array.isArray(opts.deleteIds);
+    const hasUpsert = Array.isArray(opts.upsertIds);
+    if (hasDelete && opts.deleteIds.length) {
+      deletePickListsFromCloud(opts.deleteIds);
+    }
+    if (hasUpsert) {
+      upsertPickListsToCloud(opts.upsertIds);
+    } else if (!hasDelete) {
+      upsertPickListsToCloud(pickLists.map((p) => p.id));
+    }
+  }
+}
+
+/**
+ * FEFO helper: in_stock pallets with matching item name & qty>0.
+ * Sort by expiry ascending (nulls last), then location code.
+ * @returns {{ pallet, itemIndex, available, expiry, locationCode, locationType }[]}
+ */
+function findPickCandidates(productName, qtyRemaining) {
+  void qtyRemaining; // reserved for future soft-filter / prioritization
+  const candidates = [];
+  const name = String(productName || '').trim();
+  if (!name) return candidates;
+
+  pallets.forEach((pallet) => {
+    if (!isInStock(pallet)) return;
+    const items = Array.isArray(pallet.items) ? pallet.items : [];
+    items.forEach((item, itemIndex) => {
+      if (!itemNameMatches(item && item.name, name)) return;
+      if (item.qty == null || item.qty === '') return; // MVP: require numeric qty
+      const available = Number(item.qty);
+      if (!Number.isFinite(available) || available <= 0) return;
+      let locationType = pallet.locationType === 'aisle' ? 'aisle' : (pallet.locationType === 'shelf' ? 'shelf' : null);
+      if (!locationType && pallet.shelf) locationType = 'shelf';
+      candidates.push({
+        pallet,
+        itemIndex,
+        available,
+        expiry: item.expiry || null,
+        locationCode: pallet.shelf || null,
+        locationType
+      });
+    });
+  });
+
+  candidates.sort((a, b) => {
+    if (a.expiry && b.expiry) {
+      if (a.expiry < b.expiry) return -1;
+      if (a.expiry > b.expiry) return 1;
+    } else if (a.expiry && !b.expiry) {
+      return -1;
+    } else if (!a.expiry && b.expiry) {
+      return 1;
+    }
+    const la = String(a.locationCode || '\uffff');
+    const lb = String(b.locationCode || '\uffff');
+    const locCmp = la.localeCompare(lb, 'el');
+    if (locCmp !== 0) return locCmp;
+    return String(a.pallet.id).localeCompare(String(b.pallet.id), 'el');
+  });
+
+  return candidates;
+}
+
+function recomputePickListStatus(pl) {
+  if (!pl || pl.status === 'cancelled') return;
+  const lines = pl.lines || [];
+  if (lines.length > 0 && lines.every((ln) => Number(ln.qtyPicked) >= Number(ln.qtyNeeded) && Number(ln.qtyNeeded) > 0)) {
+    pl.status = 'done';
+    lines.forEach((ln) => { ln.status = 'done'; });
+  } else if (lines.some((ln) => Number(ln.qtyPicked) > 0)) {
+    pl.status = 'in_progress';
+  } else {
+    pl.status = 'open';
+  }
+  lines.forEach((ln) => {
+    if (Number(ln.qtyPicked) >= Number(ln.qtyNeeded) && Number(ln.qtyNeeded) > 0) ln.status = 'done';
+    else ln.status = 'pending';
+  });
+}
+
+/**
+ * Confirm a pick: decrement pallet item qty, record allocation, bump line progress.
+ */
+function confirmPick(listId, lineId, palletId, qty) {
+  const qtyNum = Number(qty);
+  if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+    showToast('Μη έγκυρη ποσότητα picking', 'error');
+    return false;
+  }
+
+  const pl = pickLists.find((x) => x.id === listId);
+  if (!pl) {
+    showToast('Η λίστα picking δεν βρέθηκε', 'error');
+    return false;
+  }
+  if (pl.status === 'cancelled' || pl.status === 'done') {
+    showToast('Η λίστα δεν δέχεται άλλα picks', 'error');
+    return false;
+  }
+
+  const line = (pl.lines || []).find((ln) => ln.id === lineId);
+  if (!line) {
+    showToast('Η γραμμή δεν βρέθηκε', 'error');
+    return false;
+  }
+
+  const remaining = Math.max(0, Number(line.qtyNeeded) - Number(line.qtyPicked));
+  if (qtyNum > remaining + 1e-9) {
+    showToast(`Η ποσότητα υπερβαίνει τα υπόλοιπα (${remaining})`, 'error');
+    return false;
+  }
+
+  const pallet = pallets.find((p) => p.id === palletId);
+  if (!pallet || !isInStock(pallet)) {
+    showToast('Η παλέτα δεν είναι διαθέσιμη (in stock)', 'error');
+    return false;
+  }
+
+  const items = Array.isArray(pallet.items) ? pallet.items : [];
+  let itemIndex = -1;
+  for (let i = 0; i < items.length; i++) {
+    if (!itemNameMatches(items[i] && items[i].name, line.productName)) continue;
+    if (items[i].qty == null || items[i].qty === '') {
+      showToast('Η ποσότητα στο είδος παλέτας λείπει — ορίστε qty πρώτα', 'error');
+      return false;
+    }
+    const avail = Number(items[i].qty);
+    if (!Number.isFinite(avail) || avail <= 0) continue;
+    itemIndex = i;
+    break;
+  }
+
+  // Prefer FEFO-matched index if multiple; fall back to first with enough qty
+  const candidates = findPickCandidates(line.productName, remaining);
+  const preferred = candidates.find((c) => c.pallet.id === palletId && c.available + 1e-9 >= qtyNum);
+  if (preferred) {
+    itemIndex = preferred.itemIndex;
+  } else if (itemIndex < 0) {
+    showToast('Δεν βρέθηκε είδος με αρκετή ποσότητα στην παλέτα', 'error');
+    return false;
+  }
+
+  const item = pallet.items[itemIndex];
+  if (!item || item.qty == null || item.qty === '') {
+    showToast('Η ποσότητα στο είδος παλέτας λείπει — ορίστε qty πρώτα', 'error');
+    return false;
+  }
+  const available = Number(item.qty);
+  if (!Number.isFinite(available)) {
+    showToast('Μη έγκυρη ποσότητα είδους παλέτας', 'error');
+    return false;
+  }
+  if (available + 1e-9 < qtyNum) {
+    showToast(`Ανεπαρκές απόθεμα στην παλέτα (διαθέσιμο: ${available})`, 'error');
+    return false;
+  }
+
+  item.qty = Math.max(0, available - qtyNum);
+  const locationCode = pallet.shelf || null;
+  const expiry = item.expiry || null;
+
+  if (!Array.isArray(line.allocations)) line.allocations = [];
+  line.allocations.push({
+    palletId: pallet.id,
+    locationCode,
+    qty: qtyNum,
+    at: new Date().toISOString(),
+    expiry
+  });
+  line.qtyPicked = Number(line.qtyPicked || 0) + qtyNum;
+  if (line.qtyPicked >= line.qtyNeeded) line.status = 'done';
+  else line.status = 'pending';
+
+  pl.updatedAt = new Date().toISOString();
+  recomputePickListStatus(pl);
+
+  savePalletsToStorage({ upsertIds: [pallet.id] });
+  savePickListsToStorage({ upsertIds: [pl.id] });
+  renderInventoryTable();
+  renderPickTab();
+
+  showToast(`Picked ${qtyNum} × ${line.productName} από ${pallet.id}`, 'success');
+  return true;
+}
+
+function initPickTabUI() {
+  resetPickLineRows();
+  renderPickTab();
+}
+
+function addPickLineRow(prefill) {
+  const container = document.getElementById('pickLineRows');
+  if (!container) return;
+  const row = document.createElement('div');
+  row.className = 'pick-line-row';
+  const nameVal = prefill && prefill.name ? String(prefill.name) : '';
+  const qtyVal = prefill && prefill.qty != null && prefill.qty !== '' ? String(prefill.qty) : '';
+  row.innerHTML = `
+    <input type="text" class="form-input pick-line-name-input" placeholder="Όνομα προϊόντος" autocomplete="off" value="${escapeHtml(nameVal)}">
+    <input type="number" class="form-input pick-line-qty-input" placeholder="Ποσ." min="0.01" step="any" inputmode="decimal" value="${escapeHtml(qtyVal)}">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="removePickLineRow(this)" title="Αφαίρεση">
+      <i data-lucide="trash-2" style="width: 14px;"></i>
+    </button>
+  `;
+  container.appendChild(row);
+  if (window.lucide) lucide.createIcons();
+}
+
+function removePickLineRow(btn) {
+  const container = document.getElementById('pickLineRows');
+  if (!container || !btn) return;
+  const row = btn.closest('.pick-line-row');
+  if (!row) return;
+  row.remove();
+  if (container.querySelectorAll('.pick-line-row').length === 0) {
+    addPickLineRow();
+  }
+}
+
+function resetPickLineRows() {
+  const container = document.getElementById('pickLineRows');
+  if (!container) return;
+  container.innerHTML = '';
+  addPickLineRow();
+}
+
+function collectPickLineInputs() {
+  const container = document.getElementById('pickLineRows');
+  if (!container) return [];
+  const lines = [];
+  container.querySelectorAll('.pick-line-row').forEach((row) => {
+    const nameEl = row.querySelector('.pick-line-name-input');
+    const qtyEl = row.querySelector('.pick-line-qty-input');
+    const name = nameEl ? nameEl.value.trim() : '';
+    if (!name) return;
+    const qty = qtyEl && qtyEl.value !== '' ? Number(qtyEl.value) : NaN;
+    if (!Number.isFinite(qty) || qty <= 0) return;
+    lines.push({ productName: name, qtyNeeded: qty });
+  });
+  return lines;
+}
+
+function createPickList() {
+  const customerEl = document.getElementById('pickCustomerInput');
+  const orderEl = document.getElementById('pickOrderRefInput');
+  const customer = customerEl ? customerEl.value.trim() : '';
+  const orderRef = orderEl ? orderEl.value.trim() : '';
+  const lineInputs = collectPickLineInputs();
+
+  if (!customer || !orderRef) {
+    showToast('Συμπληρώστε πελάτη και αρ. παραγγελίας', 'error');
+    return;
+  }
+  if (!lineInputs.length) {
+    showToast('Προσθέστε τουλάχιστον μία γραμμή με όνομα και ποσότητα', 'error');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const pl = normalizePickList({
+    id: generatePickListId(),
+    customer,
+    orderRef,
+    status: 'open',
+    createdAt: now,
+    updatedAt: now,
+    lines: lineInputs.map((ln) => ({
+      id: generatePickLineId(),
+      productName: ln.productName,
+      qtyNeeded: ln.qtyNeeded,
+      qtyPicked: 0,
+      status: 'pending',
+      allocations: []
+    }))
+  });
+
+  pickLists.unshift(pl);
+  savePickListsToStorage({ upsertIds: [pl.id] });
+
+  if (customerEl) customerEl.value = '';
+  if (orderEl) orderEl.value = '';
+  resetPickLineRows();
+  activePickListId = pl.id;
+  renderPickTab();
+  showToast(`Δημιουργήθηκε λίστα ${pl.id}`, 'success');
+}
+
+function openPickListDetail(listId) {
+  activePickListId = listId;
+  renderPickTab();
+}
+
+function closePickDetail() {
+  activePickListId = null;
+  renderPickTab();
+}
+
+function cancelPickList(listId) {
+  const pl = pickLists.find((x) => x.id === listId);
+  if (!pl) return;
+  if (pl.status === 'done') {
+    showToast('Η λίστα είναι ήδη ολοκληρωμένη', 'error');
+    return;
+  }
+  if (!confirm(`Ακύρωση λίστας ${pl.id};`)) return;
+  pl.status = 'cancelled';
+  pl.updatedAt = new Date().toISOString();
+  savePickListsToStorage({ upsertIds: [pl.id] });
+  renderPickTab();
+  showToast(`Ακυρώθηκε η λίστα ${pl.id}`, 'success');
+}
+
+function markPickListDoneIfReady(listId) {
+  const pl = pickLists.find((x) => x.id === listId);
+  if (!pl) return;
+  recomputePickListStatus(pl);
+  if (pl.status !== 'done') {
+    showToast('Υπάρχουν ακόμα εκκρεμείς γραμμές', 'error');
+    return;
+  }
+  pl.updatedAt = new Date().toISOString();
+  savePickListsToStorage({ upsertIds: [pl.id] });
+  renderPickTab();
+  showToast(`Η λίστα ${pl.id} ολοκληρώθηκε`, 'success');
+}
+
+function renderPickTab() {
+  renderOpenPickLists();
+  renderPickDetail();
+  if (window.lucide) lucide.createIcons();
+}
+
+function renderOpenPickLists() {
+  const el = document.getElementById('pickOpenLists');
+  if (!el) return;
+  const open = pickLists.filter((p) => p.status === 'open' || p.status === 'in_progress');
+  if (!open.length) {
+    el.innerHTML = '<p class="pick-empty">Δεν υπάρχουν ανοιχτές λίστες picking.</p>';
+    return;
+  }
+  el.innerHTML = open.map((pl) => {
+    const progress = (pl.lines || []).reduce((acc, ln) => {
+      acc.needed += Number(ln.qtyNeeded) || 0;
+      acc.picked += Number(ln.qtyPicked) || 0;
+      return acc;
+    }, { needed: 0, picked: 0 });
+    const active = activePickListId === pl.id ? ' active-pick' : '';
+    return `
+      <button type="button" class="pick-list-card${active}" data-pick-open="${escapeHtml(pl.id)}">
+        <div class="pick-list-card-top">
+          <div class="pick-list-card-title">${escapeHtml(pl.customer)} · ${escapeHtml(pl.orderRef)}</div>
+          <span class="pick-status pick-status-${escapeHtml(pl.status)}">${escapeHtml(pickStatusLabel(pl.status))}</span>
+        </div>
+        <div class="pick-list-card-meta">
+          ${escapeHtml(pl.id)} · ${pl.lines.length} γραμμές · picked ${progress.picked}/${progress.needed}
+        </div>
+      </button>
+    `;
+  }).join('');
+
+  el.querySelectorAll('[data-pick-open]').forEach((btn) => {
+    btn.addEventListener('click', () => openPickListDetail(btn.getAttribute('data-pick-open')));
+  });
+}
+
+function renderPickDetail() {
+  const card = document.getElementById('pickDetailCard');
+  const title = document.getElementById('pickDetailTitle');
+  const meta = document.getElementById('pickDetailMeta');
+  const linesEl = document.getElementById('pickDetailLines');
+  const footer = document.getElementById('pickDetailFooter');
+  if (!card || !linesEl) return;
+
+  if (!activePickListId) {
+    card.hidden = true;
+    linesEl.innerHTML = '';
+    if (footer) footer.innerHTML = '';
+    return;
+  }
+
+  const pl = pickLists.find((x) => x.id === activePickListId);
+  if (!pl) {
+    card.hidden = true;
+    activePickListId = null;
+    return;
+  }
+
+  card.hidden = false;
+  if (title) title.textContent = `${pl.customer} · ${pl.orderRef}`;
+  if (meta) {
+    meta.innerHTML = `${escapeHtml(pl.id)} · <span class="pick-status pick-status-${escapeHtml(pl.status)}">${escapeHtml(pickStatusLabel(pl.status))}</span>`;
+  }
+
+  const canPick = pl.status === 'open' || pl.status === 'in_progress';
+
+  linesEl.innerHTML = (pl.lines || []).map((ln) => {
+    const remaining = Math.max(0, Number(ln.qtyNeeded) - Number(ln.qtyPicked));
+    const candidates = canPick && remaining > 0 ? findPickCandidates(ln.productName, remaining) : [];
+    const doneCls = ln.status === 'done' ? ' done' : '';
+    let candHtml = '';
+    if (!canPick) {
+      candHtml = '<p class="pick-empty">Η λίστα δεν είναι ενεργή για picking.</p>';
+    } else if (remaining <= 0) {
+      candHtml = '<p class="pick-empty">Η γραμμή ολοκληρώθηκε.</p>';
+    } else if (!candidates.length) {
+      candHtml = '<p class="pick-empty">Δεν βρέθηκαν παλέτες FEFO με απόθεμα για αυτό το προϊόν.</p>';
+    } else {
+      candHtml = `<div class="pick-candidates">${candidates.slice(0, 8).map((c) => {
+        const loc = c.locationCode
+          ? `${locationTypeLabel(c.locationType)}: ${escapeHtml(c.locationCode)}`
+          : 'Χωρίς θέση';
+        const expBadge = c.expiry
+          ? (() => {
+              const st = expiryStatus(c.expiry);
+              const cls = st === 'expired' ? 'badge-expired' : (st === 'soon' ? 'badge-soon' : '');
+              return ` <span class="badge-expiry ${cls}">λήξη ${escapeHtml(formatExpiryEl(c.expiry))}</span>`;
+            })()
+          : ' <span class="badge-expiry">χωρίς λήξη</span>';
+        return `
+          <div class="pick-candidate">
+            <div class="pick-candidate-info">
+              <div class="pick-candidate-id">${escapeHtml(c.pallet.id)}</div>
+              <div class="pick-candidate-meta">${loc} · διαθέσιμο <strong>${c.available}</strong>${expBadge}</div>
+            </div>
+            <div class="pick-candidate-actions">
+              <button type="button" class="btn btn-primary btn-sm"
+                data-pick-choose="${escapeHtml(pl.id)}"
+                data-line-id="${escapeHtml(ln.id)}"
+                data-pallet-id="${escapeHtml(c.pallet.id)}"
+                data-available="${c.available}"
+                data-expiry="${escapeHtml(c.expiry || '')}">
+                <i data-lucide="hand" style="width: 14px;"></i>
+                Επιλογή παλέτας
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('')}</div>`;
+    }
+
+    const hist = (ln.allocations || []).length
+      ? `<div class="pick-alloc-history"><strong>Ιστορικό:</strong><ul>${
+          ln.allocations.map((a) => {
+            const when = a.at ? new Date(a.at).toLocaleString('el-GR') : '';
+            const loc = a.locationCode ? ` @ ${escapeHtml(a.locationCode)}` : '';
+            const exp = a.expiry ? ` · λήξη ${escapeHtml(formatExpiryEl(a.expiry))}` : '';
+            return `<li>${escapeHtml(String(a.qty))} από ${escapeHtml(a.palletId)}${loc}${exp} · ${escapeHtml(when)}</li>`;
+          }).join('')
+        }</ul></div>`
+      : '';
+
+    return `
+      <div class="pick-line-detail${doneCls}">
+        <div class="pick-line-detail-top">
+          <div class="pick-line-name">${escapeHtml(ln.productName)}</div>
+          <div class="pick-line-progress">
+            <strong>${ln.qtyPicked}</strong> / ${ln.qtyNeeded}
+            <span class="pick-status pick-status-${ln.status === 'done' ? 'done' : 'open'}">${escapeHtml(pickStatusLabel(ln.status))}</span>
+          </div>
+        </div>
+        ${canPick && remaining > 0 ? `
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:0.5rem;"
+            data-pick-scan="${escapeHtml(pl.id)}" data-line-id="${escapeHtml(ln.id)}">
+            <i data-lucide="scan-line" style="width: 14px;"></i>
+            Σκανάρισμα παλέτας
+          </button>
+        ` : ''}
+        ${candHtml}
+        ${hist}
+      </div>
+    `;
+  }).join('');
+
+  linesEl.querySelectorAll('[data-pick-choose]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openPickModal({
+        listId: btn.getAttribute('data-pick-choose'),
+        lineId: btn.getAttribute('data-line-id'),
+        palletId: btn.getAttribute('data-pallet-id'),
+        available: Number(btn.getAttribute('data-available')),
+        expiry: btn.getAttribute('data-expiry') || null,
+        mode: 'direct'
+      });
+    });
+  });
+
+  linesEl.querySelectorAll('[data-pick-scan]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openPickModal({
+        listId: btn.getAttribute('data-pick-scan'),
+        lineId: btn.getAttribute('data-line-id'),
+        palletId: null,
+        available: null,
+        expiry: null,
+        mode: 'scan'
+      });
+    });
+  });
+
+  if (footer) {
+    const allDone = (pl.lines || []).length > 0 && (pl.lines || []).every((ln) => Number(ln.qtyPicked) >= Number(ln.qtyNeeded));
+    footer.innerHTML = `
+      ${canPick && allDone ? `
+        <button type="button" class="btn btn-emerald" data-pick-mark-done="${escapeHtml(pl.id)}">
+          <i data-lucide="check-check" style="width: 16px;"></i>
+          Ολοκλήρωση λίστας
+        </button>
+      ` : ''}
+      ${canPick ? `
+        <button type="button" class="btn btn-secondary" data-pick-cancel="${escapeHtml(pl.id)}">
+          <i data-lucide="ban" style="width: 14px;"></i>
+          Ακύρωση λίστας
+        </button>
+      ` : ''}
+    `;
+    const doneBtn = footer.querySelector('[data-pick-mark-done]');
+    if (doneBtn) doneBtn.addEventListener('click', () => markPickListDoneIfReady(doneBtn.getAttribute('data-pick-mark-done')));
+    const cancelBtn = footer.querySelector('[data-pick-cancel]');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => cancelPickList(cancelBtn.getAttribute('data-pick-cancel')));
+  }
+}
+
+function openPickModal(ctx) {
+  const pl = pickLists.find((x) => x.id === ctx.listId);
+  if (!pl) return;
+  const line = (pl.lines || []).find((ln) => ln.id === ctx.lineId);
+  if (!line) return;
+
+  const remaining = Math.max(0, Number(line.qtyNeeded) - Number(line.qtyPicked));
+  if (remaining <= 0) {
+    showToast('Η γραμμή έχει ήδη ολοκληρωθεί', 'error');
+    return;
+  }
+
+  pendingPickContext = {
+    listId: ctx.listId,
+    lineId: ctx.lineId,
+    palletId: ctx.palletId || null,
+    available: ctx.available != null ? Number(ctx.available) : null,
+    expiry: ctx.expiry || null,
+    mode: ctx.mode || 'direct'
+  };
+
+  const modal = document.getElementById('pickModal');
+  const sub = document.getElementById('pickModalSub');
+  const candEl = document.getElementById('pickModalCandidates');
+  const qtyInput = document.getElementById('pickQtyInput');
+
+  if (sub) {
+    sub.textContent = `${line.productName} · υπόλοιπο ${remaining} · λίστα ${pl.id}`;
+  }
+
+  const candidates = findPickCandidates(line.productName, remaining);
+  if (candEl) {
+    if (!candidates.length) {
+      candEl.innerHTML = '<p class="pick-empty">Καμία διαθέσιμη παλέτα.</p>';
+    } else {
+      candEl.innerHTML = candidates.slice(0, 12).map((c) => {
+        const selected = pendingPickContext.palletId === c.pallet.id ? ' selected' : '';
+        const checked = pendingPickContext.palletId === c.pallet.id ? 'checked' : '';
+        const loc = c.locationCode
+          ? `${locationTypeLabel(c.locationType)} ${c.locationCode}`
+          : 'Χωρίς θέση';
+        const exp = c.expiry ? ` · λήξη ${formatExpiryEl(c.expiry)}` : '';
+        return `
+          <button type="button" class="pick-modal-cand${selected}"
+            data-modal-pallet="${escapeHtml(c.pallet.id)}"
+            data-modal-avail="${c.available}"
+            data-modal-expiry="${escapeHtml(c.expiry || '')}">
+            <input type="radio" class="pick-modal-cand-radio" name="pickPalletRadio" ${checked} tabindex="-1">
+            <div>
+              <div class="pick-candidate-id">${escapeHtml(c.pallet.id)}</div>
+              <div class="pick-candidate-meta">${escapeHtml(loc)} · διαθέσιμο ${c.available}${escapeHtml(exp)}</div>
+            </div>
+          </button>
+        `;
+      }).join('');
+
+      candEl.querySelectorAll('[data-modal-pallet]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          pendingPickContext.palletId = btn.getAttribute('data-modal-pallet');
+          pendingPickContext.available = Number(btn.getAttribute('data-modal-avail'));
+          pendingPickContext.expiry = btn.getAttribute('data-modal-expiry') || null;
+          candEl.querySelectorAll('.pick-modal-cand').forEach((el) => el.classList.remove('selected'));
+          btn.classList.add('selected');
+          const radio = btn.querySelector('input[type="radio"]');
+          if (radio) radio.checked = true;
+          if (qtyInput) {
+            const maxQ = Math.min(remaining, pendingPickContext.available || remaining);
+            qtyInput.value = String(maxQ);
+            qtyInput.max = String(maxQ);
+          }
+        });
+      });
+    }
+  }
+
+  if (qtyInput) {
+    const maxQ = Math.min(
+      remaining,
+      pendingPickContext.available != null && Number.isFinite(pendingPickContext.available)
+        ? pendingPickContext.available
+        : remaining
+    );
+    qtyInput.value = pendingPickContext.palletId ? String(maxQ) : '';
+    qtyInput.max = String(remaining);
+    qtyInput.min = '0.01';
+  }
+
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+  }
+  if (window.lucide) lucide.createIcons();
+  if (qtyInput) setTimeout(() => qtyInput.focus(), 50);
+}
+
+function closePickModal() {
+  pendingPickContext = null;
+  const modal = document.getElementById('pickModal');
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function submitPickConfirm() {
+  if (!pendingPickContext || !pendingPickContext.palletId) {
+    showToast('Επιλέξτε παλέτα', 'error');
+    return;
+  }
+  const qtyInput = document.getElementById('pickQtyInput');
+  const qty = qtyInput ? Number(qtyInput.value) : NaN;
+  const ok = confirmPick(
+    pendingPickContext.listId,
+    pendingPickContext.lineId,
+    pendingPickContext.palletId,
+    qty
+  );
+  if (ok) closePickModal();
+}
+
+function bindPickModalChrome() {
+  const modal = document.getElementById('pickModal');
+  if (!modal || modal.dataset.bound === '1') return;
+  modal.dataset.bound = '1';
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closePickModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && !modal.hidden) closePickModal();
+  });
+}
+
 
 /* ==========================================================================
    UTILITY FUNCTIONS
