@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
+  bindShipModalChrome();
   bindShelfTagPrintActions();
   bindScanFileFallback();
 
@@ -90,12 +91,18 @@ function toastFirebaseFallback(msg) {
 }
 
 function palletToFirestoreDoc(p) {
+  const status = p.status === 'shipped' ? 'shipped' : 'in_stock';
   return {
     customer: p.customer || "",
     shelf: (p.shelf === undefined || p.shelf === "") ? null : p.shelf,
     items: normalizeItems(p.items),
     createdAt: p.createdAt || new Date().toISOString(),
     pairedAt: p.pairedAt == null ? null : p.pairedAt,
+    status,
+    shippedAt: p.shippedAt || null,
+    shippedTo: p.shippedTo || null,
+    shippedRef: p.shippedRef || null,
+    shippedNote: p.shippedNote || null,
     updatedAt: new Date().toISOString()
   };
 }
@@ -103,6 +110,26 @@ function palletToFirestoreDoc(p) {
 function sortPalletsByCreatedDesc(list) {
   list.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   return list;
+}
+
+/** Normalize ship/export fields on load. Missing status → in_stock. */
+function normalizePallet(p) {
+  if (!p || typeof p !== 'object') return p;
+  const status = p.status === 'shipped' ? 'shipped' : 'in_stock';
+  return {
+    ...p,
+    items: normalizeItems(p.items),
+    status,
+    shippedAt: p.shippedAt || null,
+    shippedTo: (p.shippedTo == null || p.shippedTo === '') ? null : String(p.shippedTo),
+    shippedRef: (p.shippedRef == null || p.shippedRef === '') ? null : String(p.shippedRef),
+    shippedNote: (p.shippedNote == null || p.shippedNote === '') ? null : String(p.shippedNote),
+    shelf: (p.shelf === undefined || p.shelf === '') ? null : p.shelf
+  };
+}
+
+function isInStock(p) {
+  return !p || p.status !== 'shipped';
 }
 
 function mirrorPalletsToLocalCache() {
@@ -119,10 +146,7 @@ function loadPalletsFromStorage() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        pallets = sortPalletsByCreatedDesc(parsed.map((p) => ({
-          ...p,
-          items: normalizeItems(p && p.items)
-        })));
+        pallets = sortPalletsByCreatedDesc(parsed.map((p) => normalizePallet(p)));
       } else {
         console.warn("Invalid pallets storage shape; resetting to []");
         pallets = [];
@@ -149,7 +173,7 @@ function subscribePallets() {
     const next = [];
     snap.forEach((d) => {
       const data = d.data() || {};
-      next.push({ id: d.id, ...data, items: normalizeItems(data.items) });
+      next.push(normalizePallet({ id: d.id, ...data }));
     });
     pallets = sortPalletsByCreatedDesc(next);
     mirrorPalletsToLocalCache();
@@ -248,8 +272,9 @@ function savePalletsToStorage(options) {
 }
 
 function updateStats() {
-  const total = pallets.length;
-  const assigned = pallets.filter(p => p.shelf !== null && p.shelf !== "").length;
+  const stock = pallets.filter(isInStock);
+  const total = stock.length;
+  const assigned = stock.filter(p => p.shelf !== null && p.shelf !== "").length;
   const unassigned = total - assigned;
 
   const elTotal = document.getElementById("statTotalPallets");
@@ -471,7 +496,12 @@ function handleCreatePallet(e) {
       shelf: null,
       items: items,
       createdAt: new Date().toISOString(),
-      pairedAt: null
+      pairedAt: null,
+      status: 'in_stock',
+      shippedAt: null,
+      shippedTo: null,
+      shippedRef: null,
+      shippedNote: null
     };
     pallets.unshift(palletObj);
     showToast(`Δημιουργήθηκε επιτυχώς η παλέτα ${palletIdInput}`, 'success');
@@ -568,7 +598,7 @@ function populateSimulators() {
 
   select.innerHTML = '<option value="">-- Επιλέξτε Παλέτα --</option>';
   
-  pallets.forEach(p => {
+  pallets.filter(isInStock).forEach(p => {
     const statusText = p.shelf ? `[Στο Ράφι ${p.shelf}]` : '[Μη τοποθετημένη]';
     const opt = document.createElement('option');
     opt.value = p.id;
@@ -677,12 +707,25 @@ function confirmPairing() {
       shelf: scanStepShelf,
       items: [],
       createdAt: new Date().toISOString(),
-      pairedAt: new Date().toISOString()
+      pairedAt: new Date().toISOString(),
+      status: 'in_stock',
+      shippedAt: null,
+      shippedTo: null,
+      shippedRef: null,
+      shippedNote: null
     };
     pallets.unshift(p);
   } else {
     p.shelf = scanStepShelf;
     p.pairedAt = new Date().toISOString();
+    // Re-shelving restores warehouse presence
+    if (p.status === 'shipped') {
+      p.status = 'in_stock';
+      p.shippedAt = null;
+      p.shippedTo = null;
+      p.shippedRef = null;
+      p.shippedNote = null;
+    }
   }
 
   savePalletsToStorage({ upsertIds: [p.id] });
@@ -1063,7 +1106,7 @@ function renderInventoryTable() {
   if (!tbody) return;
 
   const searchQuery = document.getElementById('searchInput') ? document.getElementById('searchInput').value.toLowerCase().trim() : '';
-  const filterStatus = document.getElementById('filterStatusSelect') ? document.getElementById('filterStatusSelect').value : 'ALL';
+  const filterStatus = document.getElementById('filterStatusSelect') ? document.getElementById('filterStatusSelect').value : 'IN_STOCK';
 
   let filtered = pallets.filter(p => {
     const items = normalizeItems(p.items);
@@ -1077,13 +1120,19 @@ function renderInventoryTable() {
                           (p.customer || '').toLowerCase().includes(searchQuery) ||
                           (p.id || '').toLowerCase().includes(searchQuery) ||
                           (p.shelf && String(p.shelf).toLowerCase().includes(searchQuery)) ||
+                          (p.shippedTo && String(p.shippedTo).toLowerCase().includes(searchQuery)) ||
+                          (p.shippedRef && String(p.shippedRef).toLowerCase().includes(searchQuery)) ||
+                          (p.shippedNote && String(p.shippedNote).toLowerCase().includes(searchQuery)) ||
                           productBlob.includes(searchQuery);
 
     if (!matchesSearch) return false;
 
-    if (filterStatus === 'ASSIGNED') return p.shelf !== null && p.shelf !== '';
-    if (filterStatus === 'UNASSIGNED') return !p.shelf;
-    return true;
+    const shipped = p.status === 'shipped';
+    if (filterStatus === 'IN_STOCK') return !shipped;
+    if (filterStatus === 'SHIPPED') return shipped;
+    if (filterStatus === 'ASSIGNED') return !shipped && p.shelf !== null && p.shelf !== '';
+    if (filterStatus === 'UNASSIGNED') return !shipped && !p.shelf;
+    return true; // ALL
   });
 
   tbody.innerHTML = '';
@@ -1103,17 +1152,42 @@ function renderInventoryTable() {
 
   filtered.forEach(p => {
     const tr = document.createElement('tr');
+    if (p.status === 'shipped') tr.classList.add('row-shipped');
     const safeId = escapeHtml(p.id);
 
-    const shelfBadgeHtml = p.shelf ? 
-      `<span class="badge-shelf">📍 ${escapeHtml(p.shelf)}</span>` : 
-      `<span class="badge-unassigned">⚠️ Εκτός Ραφιού</span>`;
+    let shelfBadgeHtml;
+    if (p.status === 'shipped') {
+      const shipDate = p.shippedAt ? new Date(p.shippedAt).toLocaleDateString('el-GR', {
+        day: '2-digit', month: '2-digit', year: 'numeric'
+      }) : '';
+      const to = p.shippedTo ? escapeHtml(p.shippedTo) : '';
+      const ref = p.shippedRef ? ` · ${escapeHtml(p.shippedRef)}` : '';
+      shelfBadgeHtml = `<span class="badge-shipped" title="${escapeHtml(p.shippedNote || '')}">🚚 ΕΞΑΓΩΓΗ${shipDate ? ' · ' + shipDate : ''}${to ? ' → ' + to : ''}${ref}</span>`;
+    } else if (p.shelf) {
+      shelfBadgeHtml = `<span class="badge-shelf">📍 ${escapeHtml(p.shelf)}</span>`;
+    } else {
+      shelfBadgeHtml = `<span class="badge-unassigned">⚠️ Εκτός Ραφιού</span>`;
+    }
 
     const dateStr = p.createdAt ? new Date(p.createdAt).toLocaleDateString('el-GR', {
       day: '2-digit', month: '2-digit', year: 'numeric'
     }) : '-';
 
     const productsHtml = inventoryProductsCellHtml(p.items);
+
+    const shipBtn = p.status === 'shipped'
+      ? `<button type="button" class="btn btn-secondary btn-sm" data-action="unship" data-id="${safeId}" title="Επαναφορά στην αποθήκη">
+            <i data-lucide="undo-2" style="width: 14px;"></i> <span>Επαναφορά</span>
+          </button>`
+      : `<button type="button" class="btn btn-emerald btn-sm" data-action="ship" data-id="${safeId}" title="Εξαγωγή παλέτας">
+            <i data-lucide="truck" style="width: 14px;"></i> <span>Εξαγωγή</span>
+          </button>`;
+
+    const pairBtn = p.status === 'shipped'
+      ? ''
+      : `<button type="button" class="btn btn-primary btn-sm" data-action="pair" data-id="${safeId}" title="Σύνδεση/Αλλαγή Θέσης">
+            <i data-lucide="link" style="width: 14px;"></i>
+          </button>`;
 
     tr.innerHTML = `
       <td style="font-weight: 700; color: var(--text-main);">${escapeHtml(p.customer)}</td>
@@ -1133,9 +1207,8 @@ function renderInventoryTable() {
           <button type="button" class="btn btn-secondary btn-sm btn-edit-pallet" data-action="edit" data-id="${safeId}" title="Επεξεργασία">
             <i data-lucide="pencil" style="width: 14px;"></i> <span>Επεξ.</span>
           </button>
-          <button type="button" class="btn btn-primary btn-sm" data-action="pair" data-id="${safeId}" title="Σύνδεση/Αλλαγή Θέσης">
-            <i data-lucide="link" style="width: 14px;"></i>
-          </button>
+          ${shipBtn}
+          ${pairBtn}
           <button type="button" class="btn btn-danger btn-sm" data-action="delete" data-id="${safeId}" title="Διαγραφή">
             <i data-lucide="trash-2" style="width: 14px;"></i>
           </button>
@@ -1166,6 +1239,8 @@ function bindInventoryTableActions() {
     if (action === 'print') printRowLabel(palletId);
     else if (action === 'edit') editPalletRow(palletId);
     else if (action === 'pair') quickPairRow(palletId);
+    else if (action === 'ship') shipPalletRow(palletId);
+    else if (action === 'unship') unshipPalletRow(palletId);
     else if (action === 'delete') deletePalletRow(palletId);
   });
 }
@@ -1198,6 +1273,110 @@ function editPalletRow(palletId) {
 function quickPairRow(palletId) {
   simulatePalletScan(palletId);
   switchTab('tab-link');
+}
+
+let pendingShipPalletId = null;
+
+function shipPalletRow(palletId) {
+  const p = pallets.find(x => x.id === palletId);
+  if (!p) {
+    showToast('Η παλέτα δεν βρέθηκε', 'error');
+    return;
+  }
+  if (p.status === 'shipped') {
+    showToast('Η παλέτα έχει ήδη εξαχθεί', 'error');
+    return;
+  }
+  pendingShipPalletId = palletId;
+  const modal = document.getElementById('shipModal');
+  const idLabel = document.getElementById('shipModalPalletId');
+  const toInput = document.getElementById('shipToInput');
+  const refInput = document.getElementById('shipRefInput');
+  const noteInput = document.getElementById('shipNoteInput');
+  if (idLabel) idLabel.textContent = `${p.id} · ${p.customer || ''}`;
+  if (toInput) toInput.value = '';
+  if (refInput) refInput.value = '';
+  if (noteInput) noteInput.value = '';
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+  }
+  if (window.lucide) lucide.createIcons();
+  if (toInput) setTimeout(() => toInput.focus(), 50);
+}
+
+function closeShipModal() {
+  pendingShipPalletId = null;
+  const modal = document.getElementById('shipModal');
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function bindShipModalChrome() {
+  const modal = document.getElementById('shipModal');
+  if (!modal || modal.dataset.bound === '1') return;
+  modal.dataset.bound = '1';
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeShipModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && !modal.hidden) closeShipModal();
+  });
+}
+
+function confirmShipPallet() {
+  const palletId = pendingShipPalletId;
+  if (!palletId) return;
+  const p = pallets.find(x => x.id === palletId);
+  if (!p) {
+    showToast('Η παλέτα δεν βρέθηκε', 'error');
+    closeShipModal();
+    return;
+  }
+  const toInput = document.getElementById('shipToInput');
+  const refInput = document.getElementById('shipRefInput');
+  const noteInput = document.getElementById('shipNoteInput');
+  const shippedTo = toInput ? toInput.value.trim() : '';
+  const shippedRef = refInput ? refInput.value.trim() : '';
+  const shippedNote = noteInput ? noteInput.value.trim() : '';
+  if (!shippedTo) {
+    showToast('Ο παραλήπτης είναι υποχρεωτικός', 'error');
+    if (toInput) toInput.focus();
+    return;
+  }
+  p.status = 'shipped';
+  p.shippedAt = new Date().toISOString();
+  p.shippedTo = shippedTo;
+  p.shippedRef = shippedRef || null;
+  p.shippedNote = shippedNote || null;
+  p.shelf = null;
+  savePalletsToStorage({ upsertIds: [p.id] });
+  closeShipModal();
+  renderInventoryTable();
+  showToast(`Εξήχθη η παλέτα ${p.id} → ${shippedTo}`, 'success');
+}
+
+function unshipPalletRow(palletId) {
+  const p = pallets.find(x => x.id === palletId);
+  if (!p) {
+    showToast('Η παλέτα δεν βρέθηκε', 'error');
+    return;
+  }
+  if (p.status !== 'shipped') {
+    showToast('Η παλέτα είναι ήδη στην αποθήκη', 'error');
+    return;
+  }
+  if (!confirm(`Επαναφορά της παλέτας ${palletId} στην αποθήκη;`)) return;
+  p.status = 'in_stock';
+  p.shippedAt = null;
+  p.shippedTo = null;
+  p.shippedRef = null;
+  p.shippedNote = null;
+  savePalletsToStorage({ upsertIds: [p.id] });
+  renderInventoryTable();
+  showToast(`Η παλέτα ${p.id} επανήλθε στην αποθήκη`, 'success');
 }
 
 function deletePalletRow(palletId) {

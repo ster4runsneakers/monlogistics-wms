@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=products3">
+  <link rel="stylesheet" href="styles.css?v=ship1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -355,10 +355,12 @@
         <div class="search-header">
           <div class="search-input-wrapper">
             <i data-lucide="search" class="search-icon"></i>
-            <input type="text" id="searchInput" class="form-input" placeholder="Πελάτης, PL-…, προϊόν, λήξη ή θέση…" oninput="filterInventoryTable()">
+            <input type="text" id="searchInput" class="form-input" placeholder="Πελάτης, PL-…, προϊόν, παραλήπτης, φορτωτική…" oninput="filterInventoryTable()">
           </div>
 
           <select id="filterStatusSelect" class="form-select filter-status-select" onchange="filterInventoryTable()">
+            <option value="IN_STOCK" selected>Στην αποθήκη</option>
+            <option value="SHIPPED">Εξαχθείσες</option>
             <option value="ALL">Όλες οι Παλέτες</option>
             <option value="ASSIGNED">Συνδεδεμένες σε Ράφι</option>
             <option value="UNASSIGNED">Μη Τοποθετημένες</option>
@@ -431,6 +433,37 @@
   <!-- Area used for Clean Printing -->
   <div id="printArea" style="display: none;"></div>
 
+
+  <!-- Ship / Export Modal -->
+  <div id="shipModal" class="modal-overlay" hidden aria-hidden="true">
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="shipModalTitle">
+      <div class="modal-header">
+        <h3 id="shipModalTitle">Εξαγωγή παλέτας</h3>
+        <button type="button" class="modal-close" onclick="closeShipModal()" aria-label="Κλείσιμο">&times;</button>
+      </div>
+      <p class="modal-sub" id="shipModalPalletId"></p>
+      <div class="form-group">
+        <label class="form-label" for="shipToInput">Παραλήπτης *</label>
+        <input type="text" id="shipToInput" class="form-input" placeholder="Όνομα παραλήπτη" autocomplete="organization">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="shipRefInput">Φορτωτική / Αρ. αποστολής</label>
+        <input type="text" id="shipRefInput" class="form-input" placeholder="π.χ. WB-12345">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="shipNoteInput">Σχόλιο</label>
+        <input type="text" id="shipNoteInput" class="form-input" placeholder="Προαιρετικό">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeShipModal()">Ακύρωση</button>
+        <button type="button" class="btn btn-primary" onclick="confirmShipPallet()">
+          <i data-lucide="truck" style="width: 14px;"></i>
+          Επιβεβαίωση εξαγωγής
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
@@ -438,7 +471,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js?v=fb1"></script>
-  <!-- cache-bust: products3 -->
-  <script src="app.js?v=products3"></script>
+  <!-- cache-bust: ship1 -->
+  <script src="app.js?v=ship1"></script>
 </body>
 </html>
