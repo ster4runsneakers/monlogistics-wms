@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=cam2">
+  <link rel="stylesheet" href="styles.css?v=search1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -333,10 +333,10 @@
         <div class="search-header">
           <div class="search-input-wrapper">
             <i data-lucide="search" class="search-icon"></i>
-            <input type="text" id="searchInput" class="form-input" placeholder="Αναζήτηση με Πελάτη, Παλέτα (PL-...) ή Θέση (Α-14)..." oninput="filterInventoryTable()">
+            <input type="text" id="searchInput" class="form-input" placeholder="Πελάτης, PL-… ή θέση…" oninput="filterInventoryTable()">
           </div>
 
-          <select id="filterStatusSelect" class="form-select" style="width: auto; min-width: 180px;" onchange="filterInventoryTable()">
+          <select id="filterStatusSelect" class="form-select filter-status-select" onchange="filterInventoryTable()">
             <option value="ALL">Όλες οι Παλέτες</option>
             <option value="ASSIGNED">Συνδεδεμένες σε Ράφι</option>
             <option value="UNASSIGNED">Μη Τοποθετημένες</option>

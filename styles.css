@@ -338,6 +338,29 @@ body {
   .step-cards {
     grid-template-columns: 1fr;
   }
+
+  .search-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .search-input-wrapper {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .search-input-wrapper .form-input {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  .filter-status-select {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -763,6 +786,13 @@ body {
 .search-input-wrapper .form-input {
   padding-left: 2.75rem;
 }
+
+.filter-status-select {
+  width: auto;
+  min-width: 180px;
+  flex-shrink: 0;
+}
+
 
 .table-wrapper {
   width: 100%;
