@@ -674,8 +674,17 @@ body {
   text-align: center;
 }
 
+.shelf-tag-print-btn {
+  margin-top: 0.75rem;
+  width: 100%;
+  justify-content: center;
+}
+
 /* Print Only Styles */
 @media print {
+  .no-print {
+    display: none !important;
+  }
   body * {
     visibility: hidden;
   }

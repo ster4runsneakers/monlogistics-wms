@@ -18,6 +18,7 @@ let cameraScanPauseUntil = 0;
 let shelfGridTimeouts = [];
 let shelfGridGeneration = 0;
 let inventoryDelegatedBound = false;
+let shelfTagDelegatedBound = false;
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
@@ -39,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
+  bindShelfTagPrintActions();
 
   // If empty, suggest sample data
   if (pallets.length === 0) {
@@ -673,6 +675,7 @@ function generateShelfGrid() {
     const shelfCode = `${zone}-${i < 10 ? '0' + i : i}`;
     const card = document.createElement('div');
     card.className = 'shelf-tag-card';
+    card.dataset.shelfCode = shelfCode;
 
     const qrId = `shelf-qr-${escapeHtml(shelfCode)}`;
 
@@ -680,6 +683,7 @@ function generateShelfGrid() {
       <div class="shelf-tag-location">ΘΕΣΗ: ${escapeHtml(shelfCode)}</div>
       <div id="${qrId}" style="margin: 0.5rem 0;"></div>
       <div style="font-size: 0.65rem; color: #555; text-transform: uppercase;">MONLOGISTICS WMS - SHELF TAG</div>
+      <button type="button" class="btn btn-secondary btn-sm shelf-tag-print-btn no-print" data-shelf-print="${escapeHtml(shelfCode)}">Εκτύπωση</button>
     `;
 
     grid.appendChild(card);
@@ -696,6 +700,50 @@ function generateShelfGrid() {
   }
 }
 
+function bindShelfTagPrintActions() {
+  if (shelfTagDelegatedBound) return;
+  const grid = document.getElementById('shelfTagGrid');
+  if (!grid) return;
+  shelfTagDelegatedBound = true;
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-shelf-print]');
+    if (!btn || !grid.contains(btn)) return;
+    const shelfCode = btn.getAttribute('data-shelf-print');
+    if (!shelfCode) return;
+    printSingleShelfTag(shelfCode);
+  });
+}
+
+function printSingleShelfTag(shelfCode) {
+  const grid = document.getElementById('shelfTagGrid');
+  if (!grid) {
+    showToast('Δεν βρέθηκε η ετικέτα ραφιού!', 'error');
+    return;
+  }
+  const card = Array.from(grid.querySelectorAll('.shelf-tag-card')).find(
+    (el) => el.dataset.shelfCode === shelfCode
+  );
+  if (!card) {
+    showToast('Δεν βρέθηκε η ετικέτα ραφιού!', 'error');
+    return;
+  }
+
+  const printArea = document.getElementById('printArea');
+  printArea.innerHTML = '';
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll('.no-print').forEach((el) => el.remove());
+  printArea.appendChild(clone);
+  printArea.style.display = 'flex';
+
+  showToast(`Εκτύπωση ετικέτας ${shelfCode}`, 'success');
+  window.print();
+
+  setTimeout(() => {
+    printArea.style.display = 'none';
+    printArea.innerHTML = '';
+  }, 1000);
+}
+
 function printAllShelfTags() {
   const grid = document.getElementById('shelfTagGrid');
   if (!grid || grid.children.length === 0) {
@@ -704,7 +752,9 @@ function printAllShelfTags() {
   }
   const printArea = document.getElementById('printArea');
   printArea.innerHTML = '';
-  printArea.appendChild(grid.cloneNode(true));
+  const clone = grid.cloneNode(true);
+  clone.querySelectorAll('.no-print').forEach((el) => el.remove());
+  printArea.appendChild(clone);
   printArea.style.display = 'flex';
 
   window.print();
