@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=search2">
+  <link rel="stylesheet" href="styles.css?v=products1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -115,6 +115,24 @@
               </div>
             </div>
 
+            <div class="form-group product-section">
+              <label class="form-label">Προϊόντα παλέτας</label>
+              <div id="productRows" class="product-rows">
+                <div class="product-row">
+                  <input type="text" class="form-input product-name" placeholder="Όνομα προϊόντος" autocomplete="off">
+                  <input type="number" class="form-input product-qty" placeholder="Ποσ." min="0" step="any" inputmode="decimal">
+                  <input type="date" class="form-input product-expiry" title="Ημ/νία λήξης">
+                  <button type="button" class="btn btn-secondary btn-sm product-remove" onclick="removeProductRow(this)" title="Αφαίρεση">
+                    <i data-lucide="trash-2" style="width: 14px;"></i>
+                  </button>
+                </div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" style="margin-top: 0.6rem;" onclick="addProductRow()">
+                <i data-lucide="plus" style="width: 14px;"></i>
+                + Προσθήκη προϊόντος
+              </button>
+            </div>
+
             <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
               <button type="submit" class="btn btn-primary btn-full">
                 <i data-lucide="qr-code"></i>
@@ -163,6 +181,10 @@
                 <div class="label-field">
                   <div class="label-field-title">ΑΡΙΘΜΟΣ ΠΑΛΕΤΑΣ</div>
                   <div class="label-field-value" id="previewPalletId">PL-XXXX</div>
+                </div>
+                <div class="label-field label-products-field" id="previewProductsWrap" hidden>
+                  <div class="label-field-title">ΠΡΟΪΟΝΤΑ</div>
+                  <div class="label-products" id="previewProducts"></div>
                 </div>
               </div>
 
@@ -333,7 +355,7 @@
         <div class="search-header">
           <div class="search-input-wrapper">
             <i data-lucide="search" class="search-icon"></i>
-            <input type="text" id="searchInput" class="form-input" placeholder="Πελάτης, PL-… ή θέση…" oninput="filterInventoryTable()">
+            <input type="text" id="searchInput" class="form-input" placeholder="Πελάτης, PL-…, προϊόν, λήξη ή θέση…" oninput="filterInventoryTable()">
           </div>
 
           <select id="filterStatusSelect" class="form-select filter-status-select" onchange="filterInventoryTable()">
@@ -350,6 +372,7 @@
               <tr>
                 <th>Όνομα Πελάτη</th>
                 <th>Αριθμός Παλέτας</th>
+                <th>Προϊόντα</th>
                 <th>Θέση Ραφιού</th>
                 <th>Ημ/νία Καταγραφής</th>
                 <th style="text-align: right;">Ενέργειες</th>
@@ -415,7 +438,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js?v=fb1"></script>
-  <!-- cache-bust: fb1 -->
-  <script src="app.js?v=fb1"></script>
+  <!-- cache-bust: products1 -->
+  <script src="app.js?v=products1"></script>
 </body>
 </html>

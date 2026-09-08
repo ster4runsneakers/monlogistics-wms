@@ -856,6 +856,130 @@ body {
   font-size: 0.85rem;
 }
 
+
+/* Product rows (create form) */
+.product-section {
+  margin-top: 0.25rem;
+}
+
+.product-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.product-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(72px, 0.55fr) minmax(120px, 0.85fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.product-row .product-qty {
+  min-width: 0;
+}
+
+.product-row .product-remove {
+  flex-shrink: 0;
+  padding: 0.45rem 0.55rem;
+}
+
+@media (max-width: 640px) {
+  .product-row {
+    grid-template-columns: 1fr 1fr auto;
+    grid-template-areas:
+      "name name remove"
+      "qty expiry remove";
+  }
+  .product-row .product-name { grid-area: name; }
+  .product-row .product-qty { grid-area: qty; }
+  .product-row .product-expiry { grid-area: expiry; }
+  .product-row .product-remove {
+    grid-area: remove;
+    align-self: stretch;
+  }
+}
+
+/* Label products summary */
+.label-products-field {
+  margin-top: 0.35rem;
+}
+
+.label-products {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #111;
+  line-height: 1.35;
+}
+
+.label-product-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.label-product-more {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #444;
+}
+
+/* Inventory product chips / expiry badges */
+.inv-products {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  line-height: 1.35;
+}
+
+.product-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+
+.product-exp-meta {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.8em;
+}
+
+.product-more {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.85em;
+}
+
+.products-empty {
+  color: var(--text-dim);
+}
+
+.badge-expiry {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.badge-expired {
+  background: rgba(244, 63, 94, 0.18);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.badge-soon {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
 /* Toast Notifications */
 .toast-container {
   position: fixed;

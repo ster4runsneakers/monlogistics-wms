@@ -93,6 +93,7 @@ function palletToFirestoreDoc(p) {
   return {
     customer: p.customer || "",
     shelf: (p.shelf === undefined || p.shelf === "") ? null : p.shelf,
+    items: normalizeItems(p.items),
     createdAt: p.createdAt || new Date().toISOString(),
     pairedAt: p.pairedAt == null ? null : p.pairedAt,
     updatedAt: new Date().toISOString()
@@ -118,7 +119,10 @@ function loadPalletsFromStorage() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        pallets = sortPalletsByCreatedDesc(parsed);
+        pallets = sortPalletsByCreatedDesc(parsed.map((p) => ({
+          ...p,
+          items: normalizeItems(p && p.items)
+        })));
       } else {
         console.warn("Invalid pallets storage shape; resetting to []");
         pallets = [];
@@ -144,7 +148,8 @@ function subscribePallets() {
     applyingRemoteSnapshot = true;
     const next = [];
     snap.forEach((d) => {
-      next.push({ id: d.id, ...d.data() });
+      const data = d.data() || {};
+      next.push({ id: d.id, ...data, items: normalizeItems(data.items) });
     });
     pallets = sortPalletsByCreatedDesc(next);
     mirrorPalletsToLocalCache();
@@ -280,6 +285,137 @@ function switchTab(tabId) {
   }
 }
 
+
+/* ==========================================================================
+   PRODUCT LINE HELPERS
+   ========================================================================== */
+function normalizeItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map((it) => {
+    if (!it || typeof it !== 'object') return null;
+    const name = String(it.name || '').trim();
+    if (!name) return null;
+    let qty = it.qty;
+    if (qty === '' || qty === undefined || qty === null) qty = null;
+    else {
+      const n = Number(qty);
+      qty = Number.isFinite(n) ? n : null;
+    }
+    let expiry = it.expiry;
+    if (expiry === '' || expiry === undefined || expiry === null) expiry = null;
+    else expiry = String(expiry).trim() || null;
+    return { name, qty, expiry };
+  }).filter(Boolean);
+}
+
+function addProductRow(prefill) {
+  const container = document.getElementById('productRows');
+  if (!container) return;
+  const row = document.createElement('div');
+  row.className = 'product-row';
+  const nameVal = prefill && prefill.name ? String(prefill.name) : '';
+  const qtyVal = prefill && prefill.qty != null && prefill.qty !== '' ? String(prefill.qty) : '';
+  const expVal = prefill && prefill.expiry ? String(prefill.expiry) : '';
+  row.innerHTML = `
+    <input type="text" class="form-input product-name" placeholder="Όνομα προϊόντος" autocomplete="off" value="${escapeHtml(nameVal)}">
+    <input type="number" class="form-input product-qty" placeholder="Ποσ." min="0" step="any" inputmode="decimal" value="${escapeHtml(qtyVal)}">
+    <input type="date" class="form-input product-expiry" title="Ημ/νία λήξης" value="${escapeHtml(expVal)}">
+    <button type="button" class="btn btn-secondary btn-sm product-remove" onclick="removeProductRow(this)" title="Αφαίρεση">
+      <i data-lucide="trash-2" style="width: 14px;"></i>
+    </button>
+  `;
+  container.appendChild(row);
+  if (window.lucide) lucide.createIcons();
+}
+
+function removeProductRow(btn) {
+  const container = document.getElementById('productRows');
+  if (!container || !btn) return;
+  const row = btn.closest('.product-row');
+  if (!row) return;
+  row.remove();
+  if (container.querySelectorAll('.product-row').length === 0) {
+    addProductRow();
+  }
+}
+
+function collectProductItems() {
+  const container = document.getElementById('productRows');
+  if (!container) return [];
+  const items = [];
+  container.querySelectorAll('.product-row').forEach((row) => {
+    const nameEl = row.querySelector('.product-name');
+    const qtyEl = row.querySelector('.product-qty');
+    const expEl = row.querySelector('.product-expiry');
+    const name = nameEl ? nameEl.value.trim() : '';
+    if (!name) return;
+    let qty = null;
+    if (qtyEl && qtyEl.value !== '') {
+      const n = Number(qtyEl.value);
+      if (Number.isFinite(n)) qty = n;
+    }
+    const expiry = expEl && expEl.value ? expEl.value : null;
+    items.push({ name, qty, expiry });
+  });
+  return items;
+}
+
+function resetProductRows() {
+  const container = document.getElementById('productRows');
+  if (!container) return;
+  container.innerHTML = '';
+  addProductRow();
+}
+
+function todayYmdLocal() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function expiryStatus(expiry) {
+  if (!expiry) return null;
+  const today = todayYmdLocal();
+  if (expiry < today) return 'expired';
+  const t = new Date(today + 'T00:00:00');
+  const e = new Date(expiry + 'T00:00:00');
+  if (Number.isNaN(e.getTime())) return null;
+  const diffDays = Math.round((e - t) / 86400000);
+  if (diffDays <= 7) return 'soon';
+  return 'ok';
+}
+
+function formatExpiryEl(expiry) {
+  if (!expiry) return '';
+  try {
+    const [y, m, d] = expiry.split('-');
+    if (y && m && d) return `${d}/${m}/${y}`;
+  } catch (_) {}
+  return expiry;
+}
+
+
+function inventoryProductsCellHtml(items) {
+  const list = normalizeItems(items);
+  if (list.length === 0) {
+    return '<span class="products-empty" style="color: var(--text-dim);">—</span>';
+  }
+  const first = list[0];
+  let badge = '';
+  if (list.some((it) => expiryStatus(it.expiry) === 'expired')) {
+    badge = ' <span class="badge-expiry badge-expired">Ληγμένο</span>';
+  } else if (list.some((it) => expiryStatus(it.expiry) === 'soon')) {
+    badge = ' <span class="badge-expiry badge-soon">Λήγει</span>';
+  }
+  if (list.length === 1) {
+    const exp = first.expiry ? ` <span class="product-exp-meta">${formatExpiryEl(first.expiry)}</span>` : '';
+    return `<span class="inv-products" title="${escapeHtml(list.map(i => i.name + (i.expiry ? ' · ' + i.expiry : '')).join(', '))}">${escapeHtml(first.name)}${exp}${badge}</span>`;
+  }
+  return `<span class="inv-products" title="${escapeHtml(list.map(i => i.name + (i.expiry ? ' · ' + i.expiry : '')).join(', '))}">${escapeHtml(first.name)} <span class="product-more">· ${list.length} είδη</span>${badge}</span>`;
+}
+
 /* ==========================================================================
    TAB 1: PALLET QR GENERATION & PRINT LABEL
    ========================================================================== */
@@ -298,6 +434,7 @@ function handleCreatePallet(e) {
   e.preventDefault();
   const customerInput = document.getElementById('customerName').value.trim();
   const palletIdInput = document.getElementById('palletId').value.trim().toUpperCase();
+  const items = collectProductItems();
 
   if (!customerInput || !palletIdInput) {
     showToast('Παρακαλώ συμπληρώστε όλα τα πεδία!', 'error');
@@ -311,6 +448,7 @@ function handleCreatePallet(e) {
   if (existingIndex >= 0) {
     // Update existing
     pallets[existingIndex].customer = customerInput;
+    pallets[existingIndex].items = items;
     palletObj = pallets[existingIndex];
     showToast(`Ενημερώθηκε η υπάρχουσα παλέτα ${palletIdInput}`, 'success');
   } else {
@@ -319,6 +457,7 @@ function handleCreatePallet(e) {
       id: palletIdInput,
       customer: customerInput,
       shelf: null,
+      items: items,
       createdAt: new Date().toISOString(),
       pairedAt: null
     };
@@ -338,8 +477,9 @@ function handleCreatePallet(e) {
     showToast('Η παλέτα αποθηκεύτηκε, αλλά η ετικέτα QR απέτυχε. Δοκιμάστε ξανά την εκτύπωση.', 'error');
   }
 
-  // Prepare next auto ID for next creation
+  // Prepare next auto ID for next creation; reset product rows
   generateAutoPalletId();
+  resetProductRows();
 }
 
 function renderPalletLabel(pallet) {
@@ -350,6 +490,28 @@ function renderPalletLabel(pallet) {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
   document.getElementById('previewDate').innerText = `Ημ/νία: ${dateFormatted}`;
+
+  const items = normalizeItems(pallet.items);
+  const wrap = document.getElementById('previewProductsWrap');
+  const previewProducts = document.getElementById('previewProducts');
+  if (wrap && previewProducts) {
+    if (items.length === 0) {
+      wrap.hidden = true;
+      previewProducts.innerHTML = '';
+    } else {
+      wrap.hidden = false;
+      const max = 4;
+      const shown = items.slice(0, max);
+      const extra = items.length - shown.length;
+      const lines = shown.map((it) => {
+        const exp = it.expiry ? ` · λήξη ${formatExpiryEl(it.expiry)}` : '';
+        const qty = it.qty != null ? ` ×${it.qty}` : '';
+        return `<div class="label-product-line">${escapeHtml(it.name)}${qty}${exp}</div>`;
+      });
+      if (extra > 0) lines.push(`<div class="label-product-more">+${extra} ακόμη</div>`);
+      previewProducts.innerHTML = lines.join('');
+    }
+  }
 
   const qrContainer = document.getElementById('qrcodeCanvas');
   // Compact payload — never embed long customer names (causes QR code length overflow)
@@ -501,6 +663,7 @@ function confirmPairing() {
       id: scanStepPallet.id,
       customer: scanStepPallet.customer || 'Γενικός Πελάτης',
       shelf: scanStepShelf,
+      items: [],
       createdAt: new Date().toISOString(),
       pairedAt: new Date().toISOString()
     };
@@ -891,9 +1054,18 @@ function renderInventoryTable() {
   const filterStatus = document.getElementById('filterStatusSelect') ? document.getElementById('filterStatusSelect').value : 'ALL';
 
   let filtered = pallets.filter(p => {
-    const matchesSearch = p.customer.toLowerCase().includes(searchQuery) ||
-                          p.id.toLowerCase().includes(searchQuery) ||
-                          (p.shelf && p.shelf.toLowerCase().includes(searchQuery));
+    const items = normalizeItems(p.items);
+    const productBlob = items.map((it) => [
+      it.name || '',
+      it.expiry || '',
+      formatExpiryEl(it.expiry) || ''
+    ].join(' ')).join(' ').toLowerCase();
+
+    const matchesSearch = !searchQuery ||
+                          (p.customer || '').toLowerCase().includes(searchQuery) ||
+                          (p.id || '').toLowerCase().includes(searchQuery) ||
+                          (p.shelf && String(p.shelf).toLowerCase().includes(searchQuery)) ||
+                          productBlob.includes(searchQuery);
 
     if (!matchesSearch) return false;
 
@@ -907,7 +1079,7 @@ function renderInventoryTable() {
   if (filtered.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-dim);">
+        <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-dim);">
           <i data-lucide="inbox" style="width: 32px; height: 32px; margin-bottom: 0.5rem; display: block; margin: 0 auto;"></i>
           Δεν βρέθηκαν παλέτες που να ταιριάζουν με τα κριτήρια.
         </td>
@@ -929,6 +1101,8 @@ function renderInventoryTable() {
       day: '2-digit', month: '2-digit', year: 'numeric'
     }) : '-';
 
+    const productsHtml = inventoryProductsCellHtml(p.items);
+
     tr.innerHTML = `
       <td style="font-weight: 700; color: var(--text-main);">${escapeHtml(p.customer)}</td>
       <td>
@@ -936,6 +1110,7 @@ function renderInventoryTable() {
           ${safeId}
         </span>
       </td>
+      <td style="font-size: 0.85rem; max-width: 220px;">${productsHtml}</td>
       <td>${shelfBadgeHtml}</td>
       <td style="color: var(--text-muted); font-size: 0.85rem;">${dateStr}</td>
       <td style="text-align: right;">
@@ -1123,12 +1298,40 @@ function printAllShelfTags() {
    DEMO SEED DATA
    ========================================================================== */
 function seedSampleData(notify = true) {
+  const d = (offsetDays) => {
+    const x = new Date();
+    x.setDate(x.getDate() + offsetDays);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const day = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   const samplePallets = [
-    { id: 'PL-8820', customer: 'ΔΗΜΗΤΡΙΟΥ Α.Ε.', shelf: 'Α-14', createdAt: new Date(Date.now() - 3600000 * 24 * 2).toISOString() },
-    { id: 'PL-4410', customer: 'OLYMPIC LOGISTICS', shelf: 'Β-02', createdAt: new Date(Date.now() - 3600000 * 24).toISOString() },
-    { id: 'PL-3309', customer: 'ALPHA BETA CORP', shelf: null, createdAt: new Date(Date.now() - 3600000 * 5).toISOString() },
-    { id: 'PL-9912', customer: 'MEDITERRANEAN FOODS', shelf: 'Α-15', createdAt: new Date(Date.now() - 3600000 * 2).toISOString() },
-    { id: 'PL-1105', customer: 'TECHNO PACK', shelf: null, createdAt: new Date().toISOString() }
+    {
+      id: 'PL-8820', customer: 'ΔΗΜΗΤΡΙΟΥ Α.Ε.', shelf: 'Α-14',
+      items: [
+        { name: 'Ελαιόλαδο 5L', qty: 48, expiry: d(45) },
+        { name: 'Φέτα ΠΟΠ', qty: 20, expiry: d(5) }
+      ],
+      createdAt: new Date(Date.now() - 3600000 * 24 * 2).toISOString()
+    },
+    {
+      id: 'PL-4410', customer: 'OLYMPIC LOGISTICS', shelf: 'Β-02',
+      items: [
+        { name: 'Χαρτί Α4', qty: 100, expiry: null }
+      ],
+      createdAt: new Date(Date.now() - 3600000 * 24).toISOString()
+    },
+    { id: 'PL-3309', customer: 'ALPHA BETA CORP', shelf: null, items: [], createdAt: new Date(Date.now() - 3600000 * 5).toISOString() },
+    {
+      id: 'PL-9912', customer: 'MEDITERRANEAN FOODS', shelf: 'Α-15',
+      items: [
+        { name: 'Γιαούρτι στραγγιστό', qty: 60, expiry: d(-3) },
+        { name: 'Μέλι θυμαρίσιο', qty: 24, expiry: d(120) }
+      ],
+      createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
+    },
+    { id: 'PL-1105', customer: 'TECHNO PACK', shelf: null, items: [], createdAt: new Date().toISOString() }
   ];
 
   const addedIds = [];
