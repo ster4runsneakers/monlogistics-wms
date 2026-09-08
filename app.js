@@ -421,36 +421,115 @@ async function startCameraScanner() {
 
   if (!window.Html5Qrcode) {
     showToast('Το module κάμερας φορτώνει... Παρακαλώ δοκιμάστε τον Γρήγορο Προσομοιωτή!', 'error');
-    // Keep UI in off state
     isCameraActive = false;
     if (container) container.style.display = 'none';
     if (btnText) btnText.innerText = 'Ενεργοποίηση Κάμερας';
     return;
   }
 
+  // Show viewport FIRST so #reader has non-zero size before Html5Qrcode.start()
+  if (container) container.style.display = 'block';
+  if (btnText) btnText.innerText = 'Άνοιγμα κάμερας…';
+
+  // Let layout paint so the scanner container has real dimensions
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  // Clear any previous scanner instance cleanly
+  if (html5QrcodeScanner) {
+    try {
+      const prev = html5QrcodeScanner;
+      html5QrcodeScanner = null;
+      try { await prev.stop(); } catch (_) {}
+      try { await prev.clear(); } catch (_) {}
+    } catch (_) {}
+  }
+
+  const fixedBox = Math.min(250, Math.max(120, (typeof window !== 'undefined' ? window.innerWidth : 320) - 40));
+  const config = {
+    fps: 10,
+    qrbox: (viewfinderWidth, viewfinderHeight) => {
+      const s = Math.min(250, Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7));
+      return { width: s, height: s };
+    },
+    aspectRatio: 1.333
+  };
+
+  const onSuccess = (decodedText) => {
+    handleCameraDecode(decodedText);
+  };
+  const onScanFailure = () => {
+    // Continuous scan misses — ignore
+  };
+
+  async function pickCameraId() {
+    if (typeof Html5Qrcode.getCameras !== 'function') return null;
+    try {
+      const cameras = await Html5Qrcode.getCameras();
+      if (!cameras || !cameras.length) return null;
+      const re = /back|rear|environment|πίσω/i;
+      const preferred = cameras.find(c => re.test(c.label || ''));
+      return (preferred || cameras[cameras.length - 1]).id;
+    } catch (e) {
+      console.warn('getCameras failed:', e);
+      return null;
+    }
+  }
+
+  const cameraAttempts = [];
+  const cameraId = await pickCameraId();
+  if (cameraId) cameraAttempts.push(cameraId);
+  cameraAttempts.push(
+    { facingMode: { exact: 'environment' } },
+    { facingMode: 'environment' },
+    { facingMode: 'user' }
+  );
+
+  const configsToTry = [
+    config,
+    { fps: 10, qrbox: { width: fixedBox, height: fixedBox } }
+  ];
+
+  async function resetScannerInstance() {
+    if (html5QrcodeScanner) {
+      try { await html5QrcodeScanner.stop(); } catch (_) {}
+      try { await html5QrcodeScanner.clear(); } catch (_) {}
+      html5QrcodeScanner = null;
+    }
+    const readerEl = document.getElementById('reader');
+    if (readerEl) readerEl.innerHTML = '';
+    html5QrcodeScanner = new Html5Qrcode('reader');
+  }
+
   try {
-    html5QrcodeScanner = new Html5Qrcode("reader");
-    await html5QrcodeScanner.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 200, height: 200 } },
-      (decodedText) => {
-        handleCameraDecode(decodedText);
-      },
-      (errorMessage) => {
-        // Scanning errors can be ignored
+    let started = false;
+    let lastErr = null;
+
+    for (const camConfig of cameraAttempts) {
+      if (started) break;
+      for (const cfg of configsToTry) {
+        try {
+          await resetScannerInstance();
+          await html5QrcodeScanner.start(camConfig, cfg, onSuccess, onScanFailure);
+          started = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
       }
-    );
-    // Only flip UI to on AFTER successful start
+    }
+
+    if (!started) throw lastErr || new Error('Camera start failed');
+
     isCameraActive = true;
-    if (container) container.style.display = 'block';
     if (btnText) btnText.innerText = 'Απενεργοποίηση Κάμερας';
   } catch (err) {
     console.error('Camera access error:', err);
-    showToast('Δεν βρέθηκε διαθέσιμη κάμερα. Χρησιμοποιήστε τον Γρήγορο Προσομοιωτή!', 'error');
+    showToast('Αποτυχία ανοίγματος κάμερας. Ελέγξτε τα δικαιώματα ή δοκιμάστε τον Γρήγορο Προσομοιωτή.', 'error');
     isCameraActive = false;
     if (container) container.style.display = 'none';
     if (btnText) btnText.innerText = 'Ενεργοποίηση Κάμερας';
     if (html5QrcodeScanner) {
+      try { await html5QrcodeScanner.stop(); } catch (_) {}
       try { html5QrcodeScanner.clear(); } catch (_) {}
       html5QrcodeScanner = null;
     }

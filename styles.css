@@ -624,6 +624,60 @@ body {
   min-height: 1.5rem;
 }
 
+/* Camera Scanner Viewport */
+.scanner-viewport-box {
+  margin-top: 1rem;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 240px;
+  background: #000;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+}
+
+#reader {
+  width: 100%;
+  min-height: 240px;
+}
+
+#reader video {
+  width: 100% !important;
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+}
+
+#reader img {
+  max-width: 100%;
+}
+
+.scanner-overlay {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scan-region-box {
+  width: min(70vw, 250px);
+  height: min(70vw, 250px);
+  max-width: 70%;
+  max-height: 70%;
+  border: 2px solid rgba(16, 185, 129, 0.85);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+
+@media (max-width: 480px) {
+  .scanner-viewport-box,
+  #reader {
+    min-height: 220px;
+  }
+}
+
 /* Quick Test Simulators */
 .quick-sim-box {
   background: rgba(30, 41, 59, 0.4);
