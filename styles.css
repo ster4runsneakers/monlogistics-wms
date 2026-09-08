@@ -624,7 +624,7 @@ body {
   min-height: 1.5rem;
 }
 
-/* Camera Scanner Viewport */
+/* Camera Scanner Viewport — explicit video element */
 .scanner-viewport-box {
   margin-top: 1rem;
   border-radius: var(--radius-md);
@@ -634,46 +634,49 @@ body {
   position: relative;
   width: 100%;
   max-width: 100%;
+  border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
-#reader {
+.scanner-viewport-box[hidden] {
+  display: none !important;
+}
+
+.scan-video {
   width: 100%;
+  max-height: 70vh;
   min-height: 240px;
-}
-
-#reader video {
-  width: 100% !important;
-  max-width: 100%;
-  border-radius: var(--radius-md);
   object-fit: cover;
+  background: #000;
+  display: block;
+  border-radius: var(--radius-md);
 }
 
-#reader img {
-  max-width: 100%;
+.scan-canvas {
+  display: none;
 }
 
-.scanner-overlay {
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
+.scanner-hint {
+  padding: 0.5rem 0.75rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.85);
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.scanner-actions {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem 0.85rem;
+  background: rgba(15, 23, 42, 0.9);
   justify-content: center;
-}
-
-.scan-region-box {
-  width: min(70vw, 250px);
-  height: min(70vw, 250px);
-  max-width: 70%;
-  max-height: 70%;
-  border: 2px solid rgba(16, 185, 129, 0.85);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
 }
 
 @media (max-width: 480px) {
   .scanner-viewport-box,
-  #reader {
+  .scan-video {
     min-height: 220px;
   }
 }

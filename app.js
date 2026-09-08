@@ -11,7 +11,10 @@ let activePalletForLabel = null;
 // Scanner Step State
 let scanStepPallet = null; // Object { id, customer }
 let scanStepShelf = null;  // String e.g. "Α-14"
-let html5QrcodeScanner = null;
+let mediaStream = null;
+let scanRafId = null;
+let scanIntervalId = null;
+let barcodeDetectorInstance = null;
 let isCameraActive = false;
 let isCameraToggling = false;
 let cameraScanPauseUntil = 0;
@@ -41,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
   bindShelfTagPrintActions();
+  bindScanFileFallback();
 
   // If empty, suggest sample data
   if (pallets.length === 0) {
@@ -393,7 +397,7 @@ function addRecentPair(customer, palletId, shelf) {
   }
 }
 
-/* CAMERA SCANNER ENGINE */
+/* CAMERA SCANNER ENGINE — getUserMedia + video + BarcodeDetector/jsQR */
 async function toggleCameraScanner() {
   if (isCameraToggling) return;
   isCameraToggling = true;
@@ -404,8 +408,8 @@ async function toggleCameraScanner() {
   try {
     if (isCameraActive) {
       await stopCameraScanner();
-      container.style.display = 'none';
-      btnText.innerText = 'Ενεργοποίηση Κάμερας';
+      if (container) container.hidden = true;
+      if (btnText) btnText.innerText = 'Ενεργοποίηση Κάμερας';
       isCameraActive = false;
     } else {
       await startCameraScanner();
@@ -415,160 +419,272 @@ async function toggleCameraScanner() {
   }
 }
 
+async function requestCameraStream() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('getUserMedia not supported');
+  }
+  const attempts = [
+    { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+    { audio: false, video: { facingMode: 'user' } },
+    { audio: false, video: true }
+  ];
+  let lastErr = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      lastErr = err;
+      console.warn('getUserMedia attempt failed:', constraints, err);
+    }
+  }
+  throw lastErr || new Error('Camera unavailable');
+}
+
 async function startCameraScanner() {
   const container = document.getElementById('cameraScannerContainer');
   const btnText = document.getElementById('btnCamText');
+  const video = document.getElementById('scanVideo');
 
-  if (!window.Html5Qrcode) {
-    showToast('Το module κάμερας φορτώνει... Παρακαλώ δοκιμάστε τον Γρήγορο Προσομοιωτή!', 'error');
-    isCameraActive = false;
-    if (container) container.style.display = 'none';
-    if (btnText) btnText.innerText = 'Ενεργοποίηση Κάμερας';
+  if (!container || !video) {
+    showToast('Σφάλμα UI κάμερας.', 'error');
     return;
   }
 
-  // Show viewport FIRST so #reader has non-zero size before Html5Qrcode.start()
-  if (container) container.style.display = 'block';
+  // Unhide FIRST so the viewport is visible while permission prompt appears
+  container.hidden = false;
   if (btnText) btnText.innerText = 'Άνοιγμα κάμερας…';
 
-  // Let layout paint so the scanner container has real dimensions
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  // Clear any previous scanner instance cleanly
-  if (html5QrcodeScanner) {
-    try {
-      const prev = html5QrcodeScanner;
-      html5QrcodeScanner = null;
-      try { await prev.stop(); } catch (_) {}
-      try { await prev.clear(); } catch (_) {}
-    } catch (_) {}
-  }
-
-  const fixedBox = Math.min(250, Math.max(120, (typeof window !== 'undefined' ? window.innerWidth : 320) - 40));
-  const config = {
-    fps: 10,
-    qrbox: (viewfinderWidth, viewfinderHeight) => {
-      const s = Math.min(250, Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7));
-      return { width: s, height: s };
-    },
-    aspectRatio: 1.333
-  };
-
-  const onSuccess = (decodedText) => {
-    handleCameraDecode(decodedText);
-  };
-  const onScanFailure = () => {
-    // Continuous scan misses — ignore
-  };
-
-  async function pickCameraId() {
-    if (typeof Html5Qrcode.getCameras !== 'function') return null;
-    try {
-      const cameras = await Html5Qrcode.getCameras();
-      if (!cameras || !cameras.length) return null;
-      const re = /back|rear|environment|πίσω/i;
-      const preferred = cameras.find(c => re.test(c.label || ''));
-      return (preferred || cameras[cameras.length - 1]).id;
-    } catch (e) {
-      console.warn('getCameras failed:', e);
-      return null;
-    }
-  }
-
-  const cameraAttempts = [];
-  const cameraId = await pickCameraId();
-  if (cameraId) cameraAttempts.push(cameraId);
-  cameraAttempts.push(
-    { facingMode: { exact: 'environment' } },
-    { facingMode: 'environment' },
-    { facingMode: 'user' }
-  );
-
-  const configsToTry = [
-    config,
-    { fps: 10, qrbox: { width: fixedBox, height: fixedBox } }
-  ];
-
-  async function resetScannerInstance() {
-    if (html5QrcodeScanner) {
-      try { await html5QrcodeScanner.stop(); } catch (_) {}
-      try { await html5QrcodeScanner.clear(); } catch (_) {}
-      html5QrcodeScanner = null;
-    }
-    const readerEl = document.getElementById('reader');
-    if (readerEl) readerEl.innerHTML = '';
-    html5QrcodeScanner = new Html5Qrcode('reader');
-  }
-
   try {
-    let started = false;
-    let lastErr = null;
+    // Stop any previous stream/loop cleanly
+    await stopCameraScanner(false);
 
-    for (const camConfig of cameraAttempts) {
-      if (started) break;
-      for (const cfg of configsToTry) {
-        try {
-          await resetScannerInstance();
-          await html5QrcodeScanner.start(camConfig, cfg, onSuccess, onScanFailure);
-          started = true;
-          break;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
+    container.hidden = false;
+    const stream = await requestCameraStream();
+    mediaStream = stream;
+    video.srcObject = stream;
+    video.setAttribute('playsinline', 'true');
+    video.muted = true;
+
+    try {
+      await video.play();
+    } catch (playErr) {
+      console.warn('video.play() error (may still work):', playErr);
     }
-
-    if (!started) throw lastErr || new Error('Camera start failed');
 
     isCameraActive = true;
     if (btnText) btnText.innerText = 'Απενεργοποίηση Κάμερας';
+    startScanLoop();
   } catch (err) {
     console.error('Camera access error:', err);
-    showToast('Αποτυχία ανοίγματος κάμερας. Ελέγξτε τα δικαιώματα ή δοκιμάστε τον Γρήγορο Προσομοιωτή.', 'error');
+    await stopCameraScanner(false);
+    container.hidden = false; // keep file fallback visible
     isCameraActive = false;
-    if (container) container.style.display = 'none';
     if (btnText) btnText.innerText = 'Ενεργοποίηση Κάμερας';
-    if (html5QrcodeScanner) {
-      try { await html5QrcodeScanner.stop(); } catch (_) {}
-      try { html5QrcodeScanner.clear(); } catch (_) {}
-      html5QrcodeScanner = null;
+    showToast(
+      'Αποτυχία ανοίγματος κάμερας. Ελέγξτε τα δικαιώματα (Permissions) και δοκιμάστε «Φωτογραφία / Αρχείο QR».',
+      'error'
+    );
+  }
+}
+
+async function stopCameraScanner(updateUi = true) {
+  if (scanRafId) {
+    cancelAnimationFrame(scanRafId);
+    scanRafId = null;
+  }
+  if (scanIntervalId) {
+    clearInterval(scanIntervalId);
+    scanIntervalId = null;
+  }
+
+  if (mediaStream) {
+    try {
+      mediaStream.getTracks().forEach(t => {
+        try { t.stop(); } catch (_) {}
+      });
+    } catch (_) {}
+    mediaStream = null;
+  }
+
+  const video = document.getElementById('scanVideo');
+  if (video) {
+    try { video.pause(); } catch (_) {}
+    try { video.srcObject = null; } catch (_) {}
+  }
+
+  isCameraActive = false;
+
+  if (updateUi) {
+    const container = document.getElementById('cameraScannerContainer');
+    const btnText = document.getElementById('btnCamText');
+    if (container) container.hidden = true;
+    if (btnText) btnText.innerText = 'Ενεργοποίηση Κάμερας';
+  }
+}
+
+function startScanLoop() {
+  if (scanRafId) {
+    cancelAnimationFrame(scanRafId);
+    scanRafId = null;
+  }
+  if (scanIntervalId) {
+    clearInterval(scanIntervalId);
+    scanIntervalId = null;
+  }
+
+  // Prefer rAF; fall back to interval if needed
+  let lastTick = 0;
+  const tick = async (ts) => {
+    if (!isCameraActive) return;
+    if (!ts || ts - lastTick >= 200) {
+      lastTick = ts || performance.now();
+      try {
+        await scanCurrentVideoFrame();
+      } catch (e) {
+        // Ignore transient decode errors
+      }
+    }
+    if (isCameraActive) {
+      scanRafId = requestAnimationFrame(tick);
+    }
+  };
+
+  if (typeof requestAnimationFrame === 'function') {
+    scanRafId = requestAnimationFrame(tick);
+  } else {
+    scanIntervalId = setInterval(() => {
+      if (!isCameraActive) return;
+      scanCurrentVideoFrame().catch(() => {});
+    }, 200);
+  }
+}
+
+async function scanCurrentVideoFrame() {
+  if (!isCameraActive) return;
+  if (Date.now() < cameraScanPauseUntil) return;
+
+  const video = document.getElementById('scanVideo');
+  const canvas = document.getElementById('scanCanvas');
+  if (!video || !canvas) return;
+  if (video.readyState < 2) return;
+
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (!w || !h) return;
+
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return;
+  ctx.drawImage(video, 0, 0, w, h);
+
+  const decoded = await decodeQrFromCanvas(canvas);
+  if (decoded) {
+    handleCameraDecode(decoded);
+  }
+}
+
+async function decodeQrFromCanvas(canvas) {
+  // Prefer native BarcodeDetector when available (Chrome/Android)
+  if (window.BarcodeDetector) {
+    try {
+      if (!barcodeDetectorInstance) {
+        barcodeDetectorInstance = new BarcodeDetector({ formats: ['qr_code'] });
+      }
+      const codes = await barcodeDetectorInstance.detect(canvas);
+      if (codes && codes.length && codes[0].rawValue) {
+        return String(codes[0].rawValue);
+      }
+    } catch (e) {
+      // Fall through to jsQR
     }
   }
-}
 
-async function stopCameraScanner() {
-  if (!html5QrcodeScanner) return;
-  const scanner = html5QrcodeScanner;
-  html5QrcodeScanner = null;
-  try {
-    await scanner.stop();
-    await scanner.clear();
-  } catch (err) {
-    console.error(err);
+  if (typeof window.jsQR === 'function') {
+    try {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = window.jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert'
+      });
+      if (result && result.data) return String(result.data);
+    } catch (e) {
+      console.warn('jsQR decode error:', e);
+    }
   }
+  return null;
 }
 
-async function handleCameraDecode(decodedText) {
+function handleCameraDecode(decodedText) {
   const now = Date.now();
   if (now < cameraScanPauseUntil) return;
   cameraScanPauseUntil = now + 2000;
-
-  // Pause scanning briefly so the same QR is not treated as pallet then shelf
-  try {
-    if (html5QrcodeScanner && typeof html5QrcodeScanner.pause === 'function') {
-      html5QrcodeScanner.pause(true);
-    }
-  } catch (_) {}
-
   onQrScanned(decodedText);
+}
 
-  setTimeout(() => {
+function bindScanFileFallback() {
+  const btn = document.getElementById('btnScanFile');
+  const input = document.getElementById('scanFileInput');
+  if (!btn || !input || btn.dataset.bound === '1') return;
+  btn.dataset.bound = '1';
+
+  btn.addEventListener('click', () => {
+    input.value = '';
+    input.click();
+  });
+
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
     try {
-      if (html5QrcodeScanner && isCameraActive && typeof html5QrcodeScanner.resume === 'function') {
-        html5QrcodeScanner.resume();
+      const decoded = await decodeQrFromImageFile(file);
+      if (decoded) {
+        handleCameraDecode(decoded);
+      } else {
+        showToast('Δεν βρέθηκε QR στην εικόνα. Δοκιμάστε ξανά με καλύτερο φωτισμό.', 'error');
       }
-    } catch (_) {}
-  }, 2000);
+    } catch (e) {
+      console.error('File QR decode failed:', e);
+      showToast('Αποτυχία ανάγνωσης εικόνας QR.', 'error');
+    }
+  });
+}
+
+async function decodeQrFromImageFile(file) {
+  const bitmapOrImg = await loadImageForDecode(file);
+  const canvas = document.getElementById('scanCanvas') || document.createElement('canvas');
+  const w = bitmapOrImg.width || bitmapOrImg.naturalWidth;
+  const h = bitmapOrImg.height || bitmapOrImg.naturalHeight;
+  if (!w || !h) return null;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmapOrImg, 0, 0, w, h);
+  if (bitmapOrImg.close) {
+    try { bitmapOrImg.close(); } catch (_) {}
+  }
+  return decodeQrFromCanvas(canvas);
+}
+
+function loadImageForDecode(file) {
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(file);
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      reject(e);
+    };
+    img.src = url;
+  });
 }
 
 function onQrScanned(text) {

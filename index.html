@@ -11,12 +11,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=mobile3">
+  <link rel="stylesheet" href="styles.css?v=cam2">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
-  <!-- HTML5 Qrcode Scanner CDN -->
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <!-- jsQR decoder (live + file fallback) -->
+  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -229,11 +229,14 @@
               </button>
             </div>
 
-            <!-- Camera Scanner Viewport -->
-            <div id="cameraScannerContainer" class="scanner-viewport-box" style="display: none;">
-              <div id="reader"></div>
-              <div class="scanner-overlay">
-                <div class="scan-region-box"></div>
+            <!-- Camera Scanner Viewport (explicit video + canvas) -->
+            <div id="cameraScannerContainer" class="scanner-viewport-box" hidden>
+              <video id="scanVideo" class="scan-video" playsinline muted autoplay></video>
+              <canvas id="scanCanvas" class="scan-canvas" hidden></canvas>
+              <div class="scanner-hint">Στοχεύστε το QR μέσα στο πλαίσιο</div>
+              <div class="scanner-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnScanFile">Φωτογραφία / Αρχείο QR</button>
+                <input type="file" id="scanFileInput" accept="image/*" capture="environment" hidden>
               </div>
             </div>
 
@@ -408,6 +411,7 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- App Script -->
-  <script src="app.js"></script>
+  <!-- cache-bust: cam2 -->
+  <script src="app.js?v=cam2"></script>
 </body>
 </html>
