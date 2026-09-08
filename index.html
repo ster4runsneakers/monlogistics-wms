@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=mobile3">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -38,6 +38,30 @@
         </div>
       </div>
 
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs">
+        <button class="nav-tab active" onclick="switchTab('tab-generate')">
+          <i data-lucide="qr-code" style="width: 18px;"></i>
+          <span class="nav-label-full">1. Παραγωγή QR</span>
+          <span class="nav-label-short">1. QR</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-link')">
+          <i data-lucide="scan-line" style="width: 18px;"></i>
+          <span class="nav-label-full">2. Σύνδεση με Ράφι</span>
+          <span class="nav-label-short">2. Ράφι</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-inventory')">
+          <i data-lucide="search" style="width: 18px;"></i>
+          <span class="nav-label-full">3. Αναζήτηση</span>
+          <span class="nav-label-short">3. Αναζ.</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-shelves')">
+          <i data-lucide="layers" style="width: 18px;"></i>
+          <span class="nav-label-full">4. Ετικέτες Ραφιών</span>
+          <span class="nav-label-short">4. Ετικέτες</span>
+        </button>
+      </nav>
+
       <!-- Live Counters -->
       <div class="stats-bar">
         <div class="stat-chip">
@@ -56,26 +80,6 @@
           <span class="val" id="statUnassignedPallets" style="color: var(--amber);">0</span>
         </div>
       </div>
-
-      <!-- Navigation Tabs -->
-      <nav class="nav-tabs">
-        <button class="nav-tab active" onclick="switchTab('tab-generate')">
-          <i data-lucide="qr-code" style="width: 18px;"></i>
-          <span>1. Παραγωγή QR</span>
-        </button>
-        <button class="nav-tab" onclick="switchTab('tab-link')">
-          <i data-lucide="scan-line" style="width: 18px;"></i>
-          <span>2. Σύνδεση με Ράφι</span>
-        </button>
-        <button class="nav-tab" onclick="switchTab('tab-inventory')">
-          <i data-lucide="search" style="width: 18px;"></i>
-          <span>3. Αναζήτηση</span>
-        </button>
-        <button class="nav-tab" onclick="switchTab('tab-shelves')">
-          <i data-lucide="layers" style="width: 18px;"></i>
-          <span>4. Ετικέτες Ραφιών</span>
-        </button>
-      </nav>
     </div>
   </header>
 
@@ -169,7 +173,7 @@
             </div>
           </div>
 
-          <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+          <div class="label-actions" style="display: flex; gap: 1rem; margin-top: 1.5rem;">
             <button type="button" class="btn btn-emerald btn-full" onclick="printActiveLabel()" id="btnPrintLabel">
               <i data-lucide="printer"></i>
               Εκτύπωση Ετικέτας
