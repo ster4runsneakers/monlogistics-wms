@@ -367,6 +367,18 @@ function resetProductRows() {
   addProductRow();
 }
 
+function setProductRowsFromItems(items) {
+  const container = document.getElementById('productRows');
+  if (!container) return;
+  container.innerHTML = '';
+  const list = normalizeItems(items);
+  if (list.length === 0) {
+    addProductRow();
+    return;
+  }
+  list.forEach((it) => addProductRow(it));
+}
+
 function todayYmdLocal() {
   const d = new Date();
   const y = d.getFullYear();
@@ -1118,6 +1130,9 @@ function renderInventoryTable() {
           <button type="button" class="btn btn-secondary btn-sm" data-action="print" data-id="${safeId}" title="Εκτύπωση Ετικέτας">
             <i data-lucide="printer" style="width: 14px;"></i>
           </button>
+          <button type="button" class="btn btn-secondary btn-sm" data-action="edit" data-id="${safeId}" title="Επεξεργασία">
+            <i data-lucide="pencil" style="width: 14px;"></i>
+          </button>
           <button type="button" class="btn btn-primary btn-sm" data-action="pair" data-id="${safeId}" title="Σύνδεση/Αλλαγή Θέσης">
             <i data-lucide="link" style="width: 14px;"></i>
           </button>
@@ -1149,6 +1164,7 @@ function bindInventoryTableActions() {
     const palletId = btn.getAttribute('data-id');
     if (!palletId) return;
     if (action === 'print') printRowLabel(palletId);
+    else if (action === 'edit') editPalletRow(palletId);
     else if (action === 'pair') quickPairRow(palletId);
     else if (action === 'delete') deletePalletRow(palletId);
   });
@@ -1162,6 +1178,21 @@ function printRowLabel(palletId) {
     switchTab('tab-generate');
     showToast(`Έτοιμη προς εκτύπωση η ετικέτα ${p.id}`, 'success');
   }
+}
+
+function editPalletRow(palletId) {
+  const p = pallets.find(x => x.id === palletId);
+  if (!p) {
+    showToast('Η παλέτα δεν βρέθηκε', 'error');
+    return;
+  }
+  const customerEl = document.getElementById('customerName');
+  const palletEl = document.getElementById('palletId');
+  if (customerEl) customerEl.value = p.customer || '';
+  if (palletEl) palletEl.value = p.id || '';
+  setProductRowsFromItems(p.items);
+  switchTab('tab-generate');
+  showToast(`Επεξεργασία παλέτας ${p.id} — πρόσθεσε προϊόντα και πάτα Δημιουργία/Αποθήκευση`, 'success');
 }
 
 function quickPairRow(palletId) {
