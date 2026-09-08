@@ -739,6 +739,140 @@ body {
   flex-wrap: wrap;
 }
 
+/* Location type toggle (Ράφι / Διάδρομος) */
+.loc-type-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.loc-type-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 0.25rem;
+}
+
+.loc-type-btn {
+  flex: 1 1 auto;
+  min-width: 7.5rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: rgba(30, 41, 59, 0.8);
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.loc-type-btn:hover {
+  color: var(--text-main);
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.loc-type-btn-active {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25);
+}
+
+.loc-type-btn[data-loc-type="aisle"].loc-type-btn-active {
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25);
+}
+
+.aisle-row-picker {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border-color);
+}
+
+.aisle-base-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.35rem 0 0.65rem;
+}
+
+.aisle-row-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.aisle-row-btn {
+  min-height: 3.25rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: rgba(30, 41, 59, 0.85);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.aisle-row-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.aisle-row-btn:not(:disabled):hover {
+  border-color: rgba(56, 189, 248, 0.55);
+  transform: translateY(-1px);
+}
+
+.aisle-row-btn-active {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.65);
+  color: #7dd3fc;
+}
+
+.aisle-tags-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: rgba(15, 23, 42, 0.45);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.aisle-tags-check input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: #38bdf8;
+}
+
+@media (max-width: 640px) {
+  .loc-type-btn {
+    min-width: calc(50% - 0.5rem);
+  }
+  .aisle-row-btn {
+    min-height: 3.5rem;
+    font-size: 1.5rem;
+  }
+}
+
 /* Inventory Table & Search */
 .search-header {
   display: flex;
@@ -867,6 +1001,20 @@ body {
   background: rgba(16, 185, 129, 0.15);
   color: #34d399;
   border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 0.3rem 0.7rem;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.badge-aisle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.35);
   padding: 0.3rem 0.7rem;
   border-radius: 20px;
   font-weight: 700;
@@ -1070,6 +1218,20 @@ body {
   border-bottom: 2px solid #000;
   width: 100%;
   text-align: center;
+}
+
+.shelf-tag-sub {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  color: #222;
+  margin-bottom: 0.35rem;
+  line-height: 1.25;
+}
+
+.shelf-tag-card-aisle {
+  border-style: dashed;
+  background: #f0f9ff;
 }
 
 .shelf-tag-print-btn {

@@ -10,7 +10,10 @@ let activePalletForLabel = null;
 
 // Scanner Step State
 let scanStepPallet = null; // Object { id, customer }
-let scanStepShelf = null;  // String e.g. "Α-14"
+let scanStepShelf = null;  // canonical location code e.g. "Α-14" or "Α-14-Δ2"
+let scanLocationType = 'shelf'; // 'shelf' | 'aisle'
+let scanAisleRow = null;       // 1..4 when aisle ready, else null
+let scanBaseShelf = null;      // base shelf code while picking aisle row
 let mediaStream = null;
 let scanRafId = null;
 let scanIntervalId = null;
@@ -47,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderInventoryTable();
   updateStats();
   populateSimulators();
+  updateLinkUI();
   generateShelfGrid();
 
   // Delegated inventory table actions (avoid inline onclick XSS)
@@ -92,9 +96,18 @@ function toastFirebaseFallback(msg) {
 
 function palletToFirestoreDoc(p) {
   const status = p.status === 'shipped' ? 'shipped' : 'in_stock';
+  const shelf = (p.shelf === undefined || p.shelf === "") ? null : p.shelf;
+  let locationType = p.locationType === 'aisle' ? 'aisle' : (p.locationType === 'shelf' ? 'shelf' : null);
+  if (!locationType && shelf) locationType = 'shelf';
+  if (!shelf) locationType = null;
+  let aisleRow = (p.aisleRow === undefined || p.aisleRow === null || p.aisleRow === '') ? null : Number(p.aisleRow);
+  if (locationType !== 'aisle') aisleRow = null;
+  else if (!(aisleRow >= 1 && aisleRow <= 4)) aisleRow = null;
   return {
     customer: p.customer || "",
-    shelf: (p.shelf === undefined || p.shelf === "") ? null : p.shelf,
+    shelf,
+    locationType,
+    aisleRow,
     items: normalizeItems(p.items),
     createdAt: p.createdAt || new Date().toISOString(),
     pairedAt: p.pairedAt == null ? null : p.pairedAt,
@@ -112,10 +125,22 @@ function sortPalletsByCreatedDesc(list) {
   return list;
 }
 
-/** Normalize ship/export fields on load. Missing status → in_stock. */
+/** Normalize ship/export + location fields on load. Missing status → in_stock. */
 function normalizePallet(p) {
   if (!p || typeof p !== 'object') return p;
   const status = p.status === 'shipped' ? 'shipped' : 'in_stock';
+  const shelf = (p.shelf === undefined || p.shelf === '') ? null : p.shelf;
+  let locationType = p.locationType === 'aisle' ? 'aisle' : (p.locationType === 'shelf' ? 'shelf' : null);
+  // Back-compat: locationType missing + shelf set → assume shelf
+  if (!locationType && shelf) locationType = 'shelf';
+  if (!shelf) locationType = null;
+  let aisleRow = (p.aisleRow === undefined || p.aisleRow === null || p.aisleRow === '') ? null : Number(p.aisleRow);
+  if (locationType !== 'aisle') {
+    aisleRow = null;
+  } else if (!(aisleRow >= 1 && aisleRow <= 4)) {
+    const parsed = parseAisleLocationCode(shelf);
+    aisleRow = parsed ? parsed.row : null;
+  }
   return {
     ...p,
     items: normalizeItems(p.items),
@@ -124,8 +149,32 @@ function normalizePallet(p) {
     shippedTo: (p.shippedTo == null || p.shippedTo === '') ? null : String(p.shippedTo),
     shippedRef: (p.shippedRef == null || p.shippedRef === '') ? null : String(p.shippedRef),
     shippedNote: (p.shippedNote == null || p.shippedNote === '') ? null : String(p.shippedNote),
-    shelf: (p.shelf === undefined || p.shelf === '') ? null : p.shelf
+    shelf,
+    locationType,
+    aisleRow
   };
+}
+
+/** Build aisle location code: Α-14-Δ2 */
+function formatAisleLocationCode(baseShelf, row) {
+  return `${baseShelf}-Δ${row}`;
+}
+
+/** Parse Α-14-Δ2 → { base, row } or null */
+function parseAisleLocationCode(code) {
+  if (!code) return null;
+  const m = String(code).match(/^(.+)-Δ([1-4])$/);
+  if (!m) return null;
+  return { base: m[1], row: parseInt(m[2], 10) };
+}
+
+function locationLabelForPallet(p) {
+  if (!p || !p.shelf) return null;
+  if (p.locationType === 'aisle') {
+    const row = p.aisleRow || (parseAisleLocationCode(p.shelf) || {}).row;
+    return row ? `Διάδρομος σειρά ${row} · ${p.shelf}` : `Διάδρομος · ${p.shelf}`;
+  }
+  return `Ράφι ${p.shelf}`;
 }
 
 function isInStock(p) {
@@ -494,6 +543,8 @@ function handleCreatePallet(e) {
       id: palletIdInput,
       customer: customerInput,
       shelf: null,
+      locationType: null,
+      aisleRow: null,
       items: items,
       createdAt: new Date().toISOString(),
       pairedAt: null,
@@ -599,7 +650,7 @@ function populateSimulators() {
   select.innerHTML = '<option value="">-- Επιλέξτε Παλέτα --</option>';
   
   pallets.filter(isInStock).forEach(p => {
-    const statusText = p.shelf ? `[Στο Ράφι ${p.shelf}]` : '[Μη τοποθετημένη]';
+    const statusText = p.shelf ? `[${p.locationType === 'aisle' ? 'Διάδρομος' : 'Ράφι'} ${p.shelf}]` : '[Μη τοποθετημένη]';
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.innerText = `${p.id} - ${p.customer} ${statusText}`;
@@ -635,14 +686,88 @@ function syncSimPalletSelect(palletId) {
   }
 }
 
+function setScanLocationType(type) {
+  const next = type === 'aisle' ? 'aisle' : 'shelf';
+  if (scanLocationType === next) {
+    updateLinkUI();
+    return;
+  }
+  scanLocationType = next;
+  scanStepShelf = null;
+  scanAisleRow = null;
+  scanBaseShelf = null;
+  updateLinkUI();
+  showToast(next === 'aisle'
+    ? 'Θέση: Διάδρομος — επιλέξτε πρώτα το ράφι μπροστά, μετά τη σειρά 1–4'
+    : 'Θέση: Ράφι — επιλέξτε/σκανάρετε κωδικό ραφιού', 'success');
+}
+
+function selectAisleRow(row) {
+  const n = Number(row);
+  if (!(n >= 1 && n <= 4)) return;
+  if (!scanStepPallet) {
+    showToast('⚠️ Παρακαλώ επιλέξτε/σκανάρετε ΠΡΩΤΑ το QR της Παλέτας (Στάδιο 1)', 'error');
+    return;
+  }
+  if (!scanBaseShelf) {
+    showToast('⚠️ Επιλέξτε πρώτα το βασικό ράφι (π.χ. Α-14)', 'error');
+    return;
+  }
+  scanLocationType = 'aisle';
+  scanAisleRow = n;
+  scanStepShelf = formatAisleLocationCode(scanBaseShelf, n);
+  showToast(`👉 Στάδιο 2: Διάδρομος μπροστά από ${scanBaseShelf} · Σειρά ${n}`, 'success');
+  updateLinkUI();
+}
+
+function applyAisleLocation(baseShelf, row) {
+  if (!scanStepPallet) {
+    showToast('⚠️ Παρακαλώ επιλέξτε/σκανάρετε ΠΡΩΤΑ το QR της Παλέτας (Στάδιο 1)', 'error');
+    return;
+  }
+  const n = Number(row);
+  if (!baseShelf || !(n >= 1 && n <= 4)) {
+    showToast('Μη έγκυρη θέση διαδρόμου', 'error');
+    return;
+  }
+  scanLocationType = 'aisle';
+  scanBaseShelf = baseShelf;
+  scanAisleRow = n;
+  scanStepShelf = formatAisleLocationCode(baseShelf, n);
+  showToast(`👉 Στάδιο 2: Διάδρομος μπροστά από ${baseShelf} · Σειρά ${n}`, 'success');
+  updateLinkUI();
+}
+
 function simulateShelfScan(shelfCode) {
   if (!scanStepPallet) {
     showToast('⚠️ Παρακαλώ επιλέξτε/σκανάρετε ΠΡΩΤΑ το QR της Παλέτας (Στάδιο 1)', 'error');
     return;
   }
 
-  scanStepShelf = shelfCode;
-  showToast(`👉 Στάδιο 2: Σκαναρίστηκε η θέση ραφιού ${shelfCode}`, 'success');
+  const code = String(shelfCode || '').trim();
+  if (!code) return;
+
+  // If scanned code already encodes aisle (Α-14-Δ2), treat as aisle
+  const parsed = parseAisleLocationCode(code);
+  if (parsed) {
+    applyAisleLocation(parsed.base, parsed.row);
+    return;
+  }
+
+  if (scanLocationType === 'aisle') {
+    scanBaseShelf = code;
+    scanAisleRow = null;
+    scanStepShelf = null;
+    showToast(`👉 Επιλέχθηκε ράφι ${code} — επιλέξτε Σειρά μπροστά 1–4`, 'success');
+    updateLinkUI();
+    return;
+  }
+
+  scanLocationType = 'shelf';
+  scanBaseShelf = null;
+  scanAisleRow = null;
+  scanStepShelf = code;
+  showToast(`👉 Στάδιο 2: Σκαναρίστηκε η θέση ραφιού ${code}`, 'success');
   updateLinkUI();
 }
 
@@ -665,17 +790,62 @@ function updateLinkUI() {
     displayCustomer.innerText = '-';
   }
 
+  // Location type toggle
+  document.querySelectorAll('[data-loc-type]').forEach((btn) => {
+    const active = btn.getAttribute('data-loc-type') === scanLocationType;
+    btn.classList.toggle('loc-type-btn-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+
+  const aisleRowWrap = document.getElementById('aisleRowPicker');
+  const shelfStepLabel = document.getElementById('simShelfStepLabel');
+  if (aisleRowWrap) {
+    aisleRowWrap.hidden = scanLocationType !== 'aisle';
+  }
+  if (shelfStepLabel) {
+    shelfStepLabel.textContent = scanLocationType === 'aisle'
+      ? '2. Βασικό ράφι (μπροστά από):'
+      : '2. Σάρωση / Επιλογή Θέσης Ραφιού:';
+  }
+  document.querySelectorAll('[data-aisle-row]').forEach((btn) => {
+    const n = Number(btn.getAttribute('data-aisle-row'));
+    const active = scanLocationType === 'aisle' && scanAisleRow === n && !!scanStepShelf;
+    btn.classList.toggle('aisle-row-btn-active', active);
+    btn.disabled = scanLocationType === 'aisle' && !scanBaseShelf;
+  });
+  const aisleBaseHint = document.getElementById('aisleBaseHint');
+  if (aisleBaseHint) {
+    aisleBaseHint.textContent = scanBaseShelf
+      ? `Ράφι: ${scanBaseShelf} — επιλέξτε σειρά`
+      : 'Επιλέξτε πρώτα ράφι, μετά σειρά 1–4';
+  }
+
   // Step 2 UI
   const cardShelf = document.getElementById('stepCardShelf');
   const valShelf = document.getElementById('stepValShelf');
   const displayShelf = document.getElementById('statusShelfDisplay');
   const btnConfirm = document.getElementById('btnConfirmPair');
+  const stepTitleShelf = document.getElementById('stepTitleShelf');
+  if (stepTitleShelf) {
+    stepTitleShelf.textContent = scanLocationType === 'aisle' ? 'QR Θέσης Διαδρόμου' : 'QR Θέσης Ραφιού';
+  }
 
   if (scanStepShelf) {
     cardShelf.className = 'step-card completed';
-    valShelf.innerHTML = `<span style="color: var(--emerald);">✅ Ράφι ${escapeHtml(scanStepShelf)}</span>`;
-    displayShelf.className = 'badge-shelf';
-    displayShelf.innerText = `📍 Θέση ${scanStepShelf}`;
+    if (scanLocationType === 'aisle') {
+      valShelf.innerHTML = `<span style="color: var(--emerald);">✅ Διάδρομος σειρά ${scanAisleRow} · ${escapeHtml(scanStepShelf)}</span>`;
+      displayShelf.className = 'badge-aisle';
+      displayShelf.innerText = `🛤️ Διάδρομος σειρά ${scanAisleRow} · ${scanStepShelf}`;
+    } else {
+      valShelf.innerHTML = `<span style="color: var(--emerald);">✅ Ράφι ${escapeHtml(scanStepShelf)}</span>`;
+      displayShelf.className = 'badge-shelf';
+      displayShelf.innerText = `📍 Ράφι ${scanStepShelf}`;
+    }
+  } else if (scanLocationType === 'aisle' && scanBaseShelf) {
+    cardShelf.className = 'step-card active';
+    valShelf.innerText = `Ράφι ${scanBaseShelf} — εκκρεμεί σειρά`;
+    displayShelf.className = 'badge-unassigned';
+    displayShelf.innerText = `⚠️ Επιλέξτε σειρά για ${scanBaseShelf}`;
   } else {
     cardShelf.className = scanStepPallet ? 'step-card active' : 'step-card';
     valShelf.innerText = 'Εκκρεμεί Σάρωση';
@@ -690,13 +860,20 @@ function updateLinkUI() {
 function resetLinkSteps() {
   scanStepPallet = null;
   scanStepShelf = null;
-  document.getElementById('simPalletSelect').value = '';
+  scanAisleRow = null;
+  scanBaseShelf = null;
+  // keep scanLocationType so operator can continue same mode
+  const sel = document.getElementById('simPalletSelect');
+  if (sel) sel.value = '';
   updateLinkUI();
   showToast('Επαναφορά διαδικασίας σάρωσης.', 'success');
 }
 
 function confirmPairing() {
   if (!scanStepPallet || !scanStepShelf) return;
+
+  const locType = scanLocationType === 'aisle' ? 'aisle' : 'shelf';
+  const aisleRow = locType === 'aisle' ? scanAisleRow : null;
 
   let p = pallets.find(x => x.id === scanStepPallet.id);
   if (!p) {
@@ -705,6 +882,8 @@ function confirmPairing() {
       id: scanStepPallet.id,
       customer: scanStepPallet.customer || 'Γενικός Πελάτης',
       shelf: scanStepShelf,
+      locationType: locType,
+      aisleRow,
       items: [],
       createdAt: new Date().toISOString(),
       pairedAt: new Date().toISOString(),
@@ -717,6 +896,8 @@ function confirmPairing() {
     pallets.unshift(p);
   } else {
     p.shelf = scanStepShelf;
+    p.locationType = locType;
+    p.aisleRow = aisleRow;
     p.pairedAt = new Date().toISOString();
     // Re-shelving restores warehouse presence
     if (p.status === 'shipped') {
@@ -730,21 +911,29 @@ function confirmPairing() {
 
   savePalletsToStorage({ upsertIds: [p.id] });
   renderInventoryTable();
-  addRecentPair(p.customer, p.id, p.shelf);
+  addRecentPair(p.customer, p.id, p.shelf, p.locationType, p.aisleRow);
 
-  showToast(`🎉 Η παλέτα ${p.id} συνδέθηκε επιτυχώς στη θέση ${p.shelf}!`, 'success');
+  const where = locType === 'aisle'
+    ? `Διάδρομο σειρά ${aisleRow} (${p.shelf})`
+    : `ράφι ${p.shelf}`;
+  showToast(`🎉 Η παλέτα ${p.id} συνδέθηκε επιτυχώς στο ${where}!`, 'success');
 
   // Reset steps for next scanning
   resetLinkSteps();
 }
 
-function addRecentPair(customer, palletId, shelf) {
+function addRecentPair(customer, palletId, shelf, locationType, aisleRow) {
   const container = document.getElementById('recentPairsList');
   if (container.children.length === 1 && container.children[0].innerText.includes('Δεν υπάρχουν')) {
     container.innerHTML = '';
   }
 
   const timeStr = new Date().toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit' });
+  const isAisle = locationType === 'aisle';
+  const badgeClass = isAisle ? 'badge-aisle' : 'badge-shelf';
+  const badgeText = isAisle
+    ? `🛤️ Δ${aisleRow || '?'} · ${shelf}`
+    : `📍 ${shelf}`;
   const item = document.createElement('div');
   item.style.cssText = `
     background: rgba(30, 41, 59, 0.6);
@@ -762,7 +951,7 @@ function addRecentPair(customer, palletId, shelf) {
       <span style="color: var(--text-muted); font-size: 0.75rem;"> (${escapeHtml(customer)})</span>
     </div>
     <div style="display: flex; align-items: center; gap: 0.5rem;">
-      <span class="badge-shelf" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">📍 ${escapeHtml(shelf)}</span>
+      <span class="${badgeClass}" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${escapeHtml(badgeText)}</span>
       <span style="font-size: 0.7rem; color: var(--text-dim);">${escapeHtml(timeStr)}</span>
     </div>
   `;
@@ -1066,13 +1255,15 @@ function loadImageForDecode(file) {
 
 function onQrScanned(text) {
   console.log('Decoded QR Text:', text);
-  let parsedPayload = text;
   
   // Try parsing JSON if structured
   try {
     const json = JSON.parse(text);
     if (json.type === 'PALLET' && json.id) {
       simulatePalletScan(json.id);
+      return;
+    } else if (json.type === 'AISLE' && json.code && json.row) {
+      applyAisleLocation(String(json.code).trim(), Number(json.row));
       return;
     } else if (json.type === 'SHELF' && json.code) {
       simulateShelfScan(json.code);
@@ -1082,7 +1273,19 @@ function onQrScanned(text) {
     // Plain text payload parsing
   }
 
-  // Handle plain text like "PL-1001", "PALLET:PL-1001", "A-14", or "SHELF:A-14"
+  // AISLE:Α-14:2 — preferred aisle QR
+  if (text.startsWith('AISLE:')) {
+    const rest = text.replace('AISLE:', '').trim();
+    const parts = rest.split(':');
+    if (parts.length >= 2) {
+      const base = parts[0].trim();
+      const row = parseInt(parts[1].trim(), 10);
+      applyAisleLocation(base, row);
+      return;
+    }
+  }
+
+  // Handle plain text like "PL-1001", "PALLET:PL-1001", "A-14", "SHELF:A-14", "SHELF:Α-14-Δ2"
   if (text.startsWith('SHELF:')) {
     const shelf = text.replace('SHELF:', '').trim();
     simulateShelfScan(shelf);
@@ -1093,7 +1296,7 @@ function onQrScanned(text) {
     // If step 1 not done, treat scan as Pallet ID
     simulatePalletScan(text);
   } else {
-    // If step 1 done, treat scan as Shelf code
+    // If step 1 done, treat scan as Shelf / aisle code
     simulateShelfScan(text);
   }
 }
@@ -1164,7 +1367,12 @@ function renderInventoryTable() {
       const ref = p.shippedRef ? ` · ${escapeHtml(p.shippedRef)}` : '';
       shelfBadgeHtml = `<span class="badge-shipped" title="${escapeHtml(p.shippedNote || '')}">🚚 ΕΞΑΓΩΓΗ${shipDate ? ' · ' + shipDate : ''}${to ? ' → ' + to : ''}${ref}</span>`;
     } else if (p.shelf) {
-      shelfBadgeHtml = `<span class="badge-shelf">📍 ${escapeHtml(p.shelf)}</span>`;
+      if (p.locationType === 'aisle') {
+        const row = p.aisleRow || (parseAisleLocationCode(p.shelf) || {}).row || '?';
+        shelfBadgeHtml = `<span class="badge-aisle" title="Διάδρομος">🛤️ Διάδρομος σειρά ${escapeHtml(String(row))} · ${escapeHtml(p.shelf)}</span>`;
+      } else {
+        shelfBadgeHtml = `<span class="badge-shelf" title="Ράφι">📍 Ράφι ${escapeHtml(p.shelf)}</span>`;
+      }
     } else {
       shelfBadgeHtml = `<span class="badge-unassigned">⚠️ Εκτός Ραφιού</span>`;
     }
@@ -1352,6 +1560,8 @@ function confirmShipPallet() {
   p.shippedRef = shippedRef || null;
   p.shippedNote = shippedNote || null;
   p.shelf = null;
+  p.locationType = null;
+  p.aisleRow = null;
   savePalletsToStorage({ upsertIds: [p.id] });
   closeShipModal();
   renderInventoryTable();
@@ -1403,39 +1613,61 @@ function generateShelfGrid() {
   const shelfZoneInput = document.getElementById('shelfZoneInput');
   const shelfFromInput = document.getElementById('shelfFromInput');
   const shelfToInput = document.getElementById('shelfToInput');
+  const aisleCheck = document.getElementById('shelfAisleTagsCheck');
 
   const zone = (shelfZoneInput && shelfZoneInput.value ? shelfZoneInput.value.trim().toUpperCase() : '') || 'Α';
   const from = parseInt(shelfFromInput && shelfFromInput.value, 10) || 1;
   const to = parseInt(shelfToInput && shelfToInput.value, 10) || 10;
+  const includeAisle = !!(aisleCheck && aisleCheck.checked);
 
   grid.innerHTML = '';
 
-  for (let i = from; i <= to; i++) {
-    const shelfCode = `${zone}-${i < 10 ? '0' + i : i}`;
+  const appendTagCard = (opts) => {
+    const { key, title, subtitle, qrPayload, footer } = opts;
     const card = document.createElement('div');
-    card.className = 'shelf-tag-card';
-    card.dataset.shelfCode = shelfCode;
-
-    const qrId = `shelf-qr-${escapeHtml(shelfCode)}`;
-
+    card.className = 'shelf-tag-card' + (opts.aisle ? ' shelf-tag-card-aisle' : '');
+    card.dataset.shelfCode = key;
+    const qrId = `shelf-qr-${escapeHtml(key).replace(/[^a-zA-Z0-9Α-Ωα-ω_-]/g, '_')}`;
     card.innerHTML = `
-      <div class="shelf-tag-location">ΘΕΣΗ: ${escapeHtml(shelfCode)}</div>
+      <div class="shelf-tag-location">${title}</div>
+      ${subtitle ? `<div class="shelf-tag-sub">${subtitle}</div>` : ''}
       <div id="${qrId}" style="margin: 0.5rem 0;"></div>
-      <div style="font-size: 0.65rem; color: #555; text-transform: uppercase;">MONLOGISTICS WMS - SHELF TAG</div>
-      <button type="button" class="btn btn-secondary btn-sm shelf-tag-print-btn no-print" data-shelf-print="${escapeHtml(shelfCode)}">Εκτύπωση</button>
+      <div style="font-size: 0.65rem; color: #555; text-transform: uppercase;">${footer}</div>
+      <button type="button" class="btn btn-secondary btn-sm shelf-tag-print-btn no-print" data-shelf-print="${escapeHtml(key)}">Εκτύπωση</button>
     `;
-
     grid.appendChild(card);
-
-    // Generate QR for Shelf Tag
     const tid = setTimeout(() => {
       if (generation !== shelfGridGeneration) return;
       const target = document.getElementById(qrId);
-      if (target) {
-        renderQRCode(target, `SHELF:${shelfCode}`, 110);
-      }
+      if (target) renderQRCode(target, qrPayload, 110);
     }, 50);
     shelfGridTimeouts.push(tid);
+  };
+
+  for (let i = from; i <= to; i++) {
+    const shelfCode = `${zone}-${i < 10 ? '0' + i : i}`;
+    appendTagCard({
+      key: shelfCode,
+      title: `ΘΕΣΗ: ${escapeHtml(shelfCode)}`,
+      subtitle: '',
+      qrPayload: `SHELF:${shelfCode}`,
+      footer: 'MONLOGISTICS WMS - SHELF TAG',
+      aisle: false
+    });
+
+    if (includeAisle) {
+      for (let row = 1; row <= 4; row++) {
+        const aisleKey = formatAisleLocationCode(shelfCode, row);
+        appendTagCard({
+          key: aisleKey,
+          title: escapeHtml(aisleKey),
+          subtitle: escapeHtml(`ΔΙΑΔΡΟΜΟΣ μπροστά από ${shelfCode} · Σειρά ${row}`),
+          qrPayload: `AISLE:${shelfCode}:${row}`,
+          footer: 'MONLOGISTICS WMS - AISLE TAG',
+          aisle: true
+        });
+      }
+    }
   }
 }
 
@@ -1518,7 +1750,7 @@ function seedSampleData(notify = true) {
   };
   const samplePallets = [
     {
-      id: 'PL-8820', customer: 'ΔΗΜΗΤΡΙΟΥ Α.Ε.', shelf: 'Α-14',
+      id: 'PL-8820', customer: 'ΔΗΜΗΤΡΙΟΥ Α.Ε.', shelf: 'Α-14', locationType: 'shelf', aisleRow: null,
       items: [
         { name: 'Ελαιόλαδο 5L', qty: 48, expiry: d(45) },
         { name: 'Φέτα ΠΟΠ', qty: 20, expiry: d(5) }
@@ -1526,7 +1758,7 @@ function seedSampleData(notify = true) {
       createdAt: new Date(Date.now() - 3600000 * 24 * 2).toISOString()
     },
     {
-      id: 'PL-4410', customer: 'OLYMPIC LOGISTICS', shelf: 'Β-02',
+      id: 'PL-4410', customer: 'OLYMPIC LOGISTICS', shelf: 'Β-02', locationType: 'shelf', aisleRow: null,
       items: [
         { name: 'Χαρτί Α4', qty: 100, expiry: null }
       ],
@@ -1535,11 +1767,20 @@ function seedSampleData(notify = true) {
     { id: 'PL-3309', customer: 'ALPHA BETA CORP', shelf: null, items: [], createdAt: new Date(Date.now() - 3600000 * 5).toISOString() },
     {
       id: 'PL-9912', customer: 'MEDITERRANEAN FOODS', shelf: 'Α-15',
+      locationType: 'shelf', aisleRow: null,
       items: [
         { name: 'Γιαούρτι στραγγιστό', qty: 60, expiry: d(-3) },
         { name: 'Μέλι θυμαρίσιο', qty: 24, expiry: d(120) }
       ],
       createdAt: new Date(Date.now() - 3600000 * 2).toISOString()
+    },
+    {
+      id: 'PL-7744', customer: 'HELLAS CARGO', shelf: 'Α-14-Δ2',
+      locationType: 'aisle', aisleRow: 2,
+      items: [
+        { name: 'Νερό 1.5L', qty: 72, expiry: d(90) }
+      ],
+      createdAt: new Date(Date.now() - 3600000).toISOString()
     },
     { id: 'PL-1105', customer: 'TECHNO PACK', shelf: null, items: [], createdAt: new Date().toISOString() }
   ];
@@ -1547,7 +1788,7 @@ function seedSampleData(notify = true) {
   const addedIds = [];
   samplePallets.forEach(sample => {
     if (!pallets.some(p => p.id === sample.id)) {
-      pallets.push(sample);
+      pallets.push(normalizePallet(sample));
       addedIds.push(sample.id);
     }
   });
@@ -1556,7 +1797,7 @@ function seedSampleData(notify = true) {
   renderInventoryTable();
 
   if (notify) {
-    showToast('Προστέθηκαν 5 δείγματα παλετών με επιτυχία!', 'success');
+    showToast(`Προστέθηκαν ${addedIds.length} δείγματα παλετών με επιτυχία!`, 'success');
   }
 }
 

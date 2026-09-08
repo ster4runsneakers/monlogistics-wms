@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=ship1">
+  <link rel="stylesheet" href="styles.css?v=loc1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -221,9 +221,16 @@
             <i data-lucide="scan-line" style="color: var(--primary);"></i>
             Σύνδεση Παλέτας με Ράφι
           </h2>
-          <p class="card-desc">Σκανάρετε πρώτα το QR της παλέτας και μετά το QR από το ταμπελάκι του ραφιού (π.χ. Α-14).</p>
+          <p class="card-desc">Σκανάρετε πρώτα το QR της παλέτας και μετά τη θέση: <strong>Ράφι</strong> ή <strong>Διάδρομος</strong> (σειρά 1–4 μπροστά από ράφι).</p>
 
           <div class="scanner-flow">
+            <!-- Location type: Ράφι vs Διάδρομος -->
+            <div class="loc-type-toggle" role="group" aria-label="Τύπος θέσης">
+              <span class="loc-type-label">Θέση:</span>
+              <button type="button" class="loc-type-btn loc-type-btn-active" data-loc-type="shelf" aria-pressed="true" onclick="setScanLocationType('shelf')">📍 Ράφι</button>
+              <button type="button" class="loc-type-btn" data-loc-type="aisle" aria-pressed="false" onclick="setScanLocationType('aisle')">🛤️ Διάδρομος</button>
+            </div>
+
             <!-- Step Indicators -->
             <div class="step-cards">
               <!-- Step 1 Card -->
@@ -235,7 +242,7 @@
               <!-- Step 2 Card -->
               <div class="step-card" id="stepCardShelf">
                 <div class="step-num">2</div>
-                <div class="step-title">QR Θέσης Ραφιού</div>
+                <div class="step-title" id="stepTitleShelf">QR Θέσης Ραφιού</div>
                 <div class="step-val" id="stepValShelf">Εκκρεμεί Σάρωση</div>
               </div>
             </div>
@@ -275,13 +282,24 @@
               </div>
 
               <div>
-                <label class="form-label" style="font-size: 0.75rem;">2. Σάρωση / Επιλογή Θέσης Ραφιού:</label>
+                <label class="form-label" style="font-size: 0.75rem;" id="simShelfStepLabel">2. Σάρωση / Επιλογή Θέσης Ραφιού:</label>
                 <div class="sim-buttons" id="simShelfButtons">
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Α-14')">📍 Α-14</button>
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Α-15')">📍 Α-15</button>
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Β-02')">📍 Β-02</button>
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Β-08')">📍 Β-08</button>
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Γ-01')">📍 Γ-01</button>
+                </div>
+              </div>
+
+              <div id="aisleRowPicker" class="aisle-row-picker" hidden>
+                <label class="form-label" style="font-size: 0.75rem;">3. Σειρά μπροστά:</label>
+                <div id="aisleBaseHint" class="aisle-base-hint">Επιλέξτε πρώτα ράφι, μετά σειρά 1–4</div>
+                <div class="aisle-row-buttons">
+                  <button type="button" class="aisle-row-btn" data-aisle-row="1" onclick="selectAisleRow(1)" disabled>1</button>
+                  <button type="button" class="aisle-row-btn" data-aisle-row="2" onclick="selectAisleRow(2)" disabled>2</button>
+                  <button type="button" class="aisle-row-btn" data-aisle-row="3" onclick="selectAisleRow(3)" disabled>3</button>
+                  <button type="button" class="aisle-row-btn" data-aisle-row="4" onclick="selectAisleRow(4)" disabled>4</button>
                 </div>
               </div>
             </div>
@@ -310,7 +328,7 @@
               </div>
 
               <div style="border-top: 1px dashed var(--border-color); padding-top: 1.25rem;">
-                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Συνδεδεμένη Θέση Ραφιού</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Συνδεδεμένη Θέση</span>
                 <div style="margin-top: 0.4rem;">
                   <span id="statusShelfDisplay" class="badge-unassigned">⚠️ Καμία Θέση</span>
                 </div>
@@ -375,7 +393,7 @@
                 <th>Όνομα Πελάτη</th>
                 <th>Αριθμός Παλέτας</th>
                 <th>Προϊόντα</th>
-                <th>Θέση Ραφιού</th>
+                <th>Θέση</th>
                 <th>Ημ/νία Καταγραφής</th>
                 <th style="text-align: right;">Ενέργειες</th>
               </tr>
@@ -396,11 +414,11 @@
           <i data-lucide="layers" style="color: var(--primary);"></i>
           Δημιουργία Ετικετών Ραφιών (Shelf QR Tags)
         </h2>
-        <p class="card-desc">Δημιουργήστε και τυπώστε QR codes για τα ράφια της αποθήκης σας.</p>
+        <p class="card-desc">Δημιουργήστε και τυπώστε QR codes για ράφια και (προαιρετικά) θέσεις διαδρόμου μπροστά από κάθε ράφι (Δ1–Δ4).</p>
 
         <div style="display: flex; gap: 1rem; margin-bottom: 2rem; align-items: flex-end; flex-wrap: wrap;">
           <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
-            <label class="form-label">Διάδρομος (Zone)</label>
+            <label class="form-label">Ζώνη (Zone)</label>
             <input type="text" id="shelfZoneInput" class="form-input" value="Α">
           </div>
           <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
@@ -411,6 +429,10 @@
             <label class="form-label">Έως Θέση</label>
             <input type="number" id="shelfToInput" class="form-input" value="10">
           </div>
+          <label class="aisle-tags-check" for="shelfAisleTagsCheck">
+            <input type="checkbox" id="shelfAisleTagsCheck">
+            <span>Ετικέτες διαδρόμου (Δ1–Δ4)</span>
+          </label>
           <button class="btn btn-primary" onclick="generateShelfGrid()">
             <i data-lucide="refresh-cw"></i>
             Παραγωγή Ετικετών
@@ -472,6 +494,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js?v=fb1"></script>
   <!-- cache-bust: ship1 -->
-  <script src="app.js?v=ship1"></script>
+  <script src="app.js?v=loc1"></script>
 </body>
 </html>
