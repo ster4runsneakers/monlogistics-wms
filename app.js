@@ -780,49 +780,67 @@ function escapeHtml(str) {
 }
 
 /**
- * Safe QR renderer — always shows an <img> (api.qrserver.com).
- * SVG fallback only if the remote image fails to load.
- * <img> clones fine with cloneNode for print.
+ * Safe QR renderer — unique real QR per payload.
+ * Prefers local QRCode.toDataURL; falls back to api.qrserver.com with payload cache-buster.
+ * Never uses the old identical SVG matrix. On total failure, shows red error + payload.
  */
 function renderQRCode(container, text, size) {
   if (!container) return;
   container.innerHTML = '';
   const qrSize = size || 140;
+  const payload = String(text == null ? '' : text);
 
-  const img = document.createElement('img');
-  img.alt = 'QR';
-  img.style.cssText = `display:block;margin:0 auto;width:${qrSize}px;height:${qrSize}px;`;
-  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&ecc=M&margin=2&data=${encodeURIComponent(text)}`;
-  img.onerror = () => {
+  function showQrError() {
     container.innerHTML = '';
-    renderFallbackQR(container, text);
-  };
-  container.appendChild(img);
+    const err = document.createElement('div');
+    err.style.cssText = 'color:#ef4444;font-size:11px;text-align:center;padding:8px;word-break:break-all;line-height:1.35;';
+    err.innerHTML = 'QR error<br>' + escapeHtml(payload);
+    container.appendChild(err);
+  }
+
+  function appendQrImg(src, onFail) {
+    container.innerHTML = '';
+    const img = document.createElement('img');
+    img.alt = 'QR';
+    img.style.cssText = 'display:block;margin:0 auto;width:' + qrSize + 'px;height:' + qrSize + 'px;';
+    img.src = src;
+    img.onerror = function () {
+      if (typeof onFail === 'function') onFail();
+      else showQrError();
+    };
+    container.appendChild(img);
+  }
+
+  function useRemoteApi() {
+    const encoded = encodeURIComponent(payload);
+    // Cache-buster includes the full payload so each code gets a distinct URL
+    const src = 'https://api.qrserver.com/v1/create-qr-code/?size=' + qrSize + 'x' + qrSize +
+      '&ecc=M&margin=2&data=' + encoded + '&cb=' + encoded;
+    appendQrImg(src, showQrError);
+  }
+
+  if (typeof QRCode !== 'undefined' && typeof QRCode.toDataURL === 'function') {
+    try {
+      QRCode.toDataURL(payload, {
+        width: qrSize,
+        margin: 2,
+        errorCorrectionLevel: 'M'
+      }, function (err, dataURL) {
+        if (err || !dataURL) {
+          useRemoteApi();
+          return;
+        }
+        appendQrImg(dataURL, useRemoteApi);
+      });
+    } catch (e) {
+      console.error('QRCode.toDataURL failed:', e);
+      useRemoteApi();
+    }
+  } else {
+    useRemoteApi();
+  }
 }
 
-function renderFallbackQR(container, text) {
-  // Simple Fallback Canvas SVG Matrix for offline rendering
-  container.innerHTML = `
-    <div style="background: #fff; padding: 10px; border: 2px solid #000; display: inline-block;">
-      <svg width="120" height="120" viewBox="0 0 100 100" style="display: block;">
-        <rect width="100" height="100" fill="white"/>
-        <rect x="10" y="10" width="30" height="30" fill="black"/>
-        <rect x="15" y="15" width="20" height="20" fill="white"/>
-        <rect x="20" y="20" width="10" height="10" fill="black"/>
-        
-        <rect x="60" y="10" width="30" height="30" fill="black"/>
-        <rect x="65" y="15" width="20" height="20" fill="white"/>
-        <rect x="70" y="20" width="10" height="10" fill="black"/>
-
-        <rect x="10" y="60" width="30" height="30" fill="black"/>
-        <rect x="15" y="65" width="20" height="20" fill="white"/>
-        <rect x="20" y="70" width="10" height="10" fill="black"/>
-        
-        <rect x="50" y="50" width="15" height="15" fill="black"/>
-        <rect x="70" y="70" width="15" height="15" fill="black"/>
-        <rect x="50" y="75" width="10" height="10" fill="black"/>
-      </svg>
-      <div style="font-size: 8px; color: #000; text-align: center; margin-top: 4px; font-weight: bold;">${escapeHtml(text.substring(0, 18))}</div>
-    </div>
-  `;
+function renderFallbackQR(container, text, size) {
+  renderQRCode(container, text, size);
 }
