@@ -23,10 +23,18 @@ let shelfGridGeneration = 0;
 let inventoryDelegatedBound = false;
 let shelfTagDelegatedBound = false;
 
+// Firebase / sync state
+let cloudEnabled = false;
+let db = null;
+let firestoreUnsub = null;
+let applyingRemoteSnapshot = false;
+let firebaseFallbackToastShown = false;
+
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
   loadPalletsFromStorage();
-  
+  const usingCloud = initFirebaseSync();
+
   // Initialize Lucide Icons if available
   if (window.lucide) {
     lucide.createIcons();
@@ -34,8 +42,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Pre-fill initial form auto ID
   generateAutoPalletId();
-  
-  // Render initial table & statistics
+
+  // Render initial table & statistics (cloud snapshot may refresh again)
   renderInventoryTable();
   updateStats();
   populateSimulators();
@@ -46,24 +54,73 @@ document.addEventListener('DOMContentLoaded', () => {
   bindShelfTagPrintActions();
   bindScanFileFallback();
 
-  // If empty, suggest sample data
-  if (pallets.length === 0) {
+  // Seed only in local mode when empty (cloud is shared source of truth)
+  if (!usingCloud && pallets.length === 0) {
     seedSampleData(false);
   }
 });
 
 /* ==========================================================================
-   STORAGE ENGINE
+   STORAGE ENGINE (localStorage + optional Firestore realtime)
    ========================================================================== */
+function isFirebaseConfigReady(cfg) {
+  return !!(cfg && typeof cfg.apiKey === "string" && cfg.apiKey.trim() &&
+    typeof cfg.projectId === "string" && cfg.projectId.trim());
+}
+
+function setSyncStatus(state) {
+  const el = document.getElementById("syncStatus");
+  if (!el) return;
+  el.classList.remove("sync-online", "sync-local", "sync-error", "sync-connecting");
+  const map = {
+    online: { text: "Cloud: συνδεδεμένο", cls: "sync-online" },
+    local: { text: "Τοπικά", cls: "sync-local" },
+    error: { text: "Σφάλμα", cls: "sync-error" },
+    connecting: { text: "Cloud: σύνδεση…", cls: "sync-connecting" }
+  };
+  const m = map[state] || map.local;
+  el.textContent = m.text;
+  el.classList.add(m.cls);
+}
+
+function toastFirebaseFallback(msg) {
+  if (firebaseFallbackToastShown) return;
+  firebaseFallbackToastShown = true;
+  try { showToast(msg || "Firebase μη διαθέσιμο — τοπική λειτουργία.", "error"); } catch (_) {}
+}
+
+function palletToFirestoreDoc(p) {
+  return {
+    customer: p.customer || "",
+    shelf: (p.shelf === undefined || p.shelf === "") ? null : p.shelf,
+    createdAt: p.createdAt || new Date().toISOString(),
+    pairedAt: p.pairedAt == null ? null : p.pairedAt,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function sortPalletsByCreatedDesc(list) {
+  list.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  return list;
+}
+
+function mirrorPalletsToLocalCache() {
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify(pallets));
+  } catch (e) {
+    console.error("Failed to mirror pallets to localStorage:", e);
+  }
+}
+
 function loadPalletsFromStorage() {
   try {
     const raw = localStorage.getItem(STATE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        pallets = parsed;
+        pallets = sortPalletsByCreatedDesc(parsed);
       } else {
-        console.warn('Invalid pallets storage shape; resetting to []');
+        console.warn("Invalid pallets storage shape; resetting to []");
         pallets = [];
         localStorage.removeItem(STATE_KEY);
       }
@@ -71,29 +128,131 @@ function loadPalletsFromStorage() {
       pallets = [];
     }
   } catch (e) {
-    console.error('Failed to load local storage data:', e);
+    console.error("Failed to load local storage data:", e);
     pallets = [];
   }
 }
 
-function savePalletsToStorage() {
-  try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(pallets));
-  } catch (e) {
-    console.error('Failed to save to local storage:', e);
+function subscribePallets() {
+  if (!db) return;
+  setSyncStatus("connecting");
+  if (typeof firestoreUnsub === "function") {
+    try { firestoreUnsub(); } catch (_) {}
+    firestoreUnsub = null;
   }
+  firestoreUnsub = db.collection("pallets").onSnapshot((snap) => {
+    applyingRemoteSnapshot = true;
+    const next = [];
+    snap.forEach((d) => {
+      next.push({ id: d.id, ...d.data() });
+    });
+    pallets = sortPalletsByCreatedDesc(next);
+    mirrorPalletsToLocalCache();
+    renderInventoryTable();
+    updateStats();
+    populateSimulators();
+    setSyncStatus("online");
+    applyingRemoteSnapshot = false;
+  }, (err) => {
+    console.error("Firestore onSnapshot error:", err);
+    setSyncStatus("error");
+    toastFirebaseFallback("Σφάλμα συγχρονισμού Firebase — τοπική λειτουργία.");
+    cloudEnabled = false;
+  });
+}
+
+function initFirebaseSync() {
+  try {
+    const cfg = window.MONLOG_FIREBASE_CONFIG;
+    if (!isFirebaseConfigReady(cfg)) {
+      cloudEnabled = false;
+      setSyncStatus("local");
+      return false;
+    }
+    if (typeof firebase === "undefined" || !firebase.initializeApp || !firebase.firestore) {
+      cloudEnabled = false;
+      setSyncStatus("error");
+      toastFirebaseFallback("Λείπουν τα scripts Firebase — τοπική λειτουργία.");
+      return false;
+    }
+    if (!firebase.apps || !firebase.apps.length) {
+      firebase.initializeApp(cfg);
+    }
+    db = firebase.firestore();
+    cloudEnabled = true;
+    subscribePallets();
+    return true;
+  } catch (e) {
+    console.error("Firebase init failed:", e);
+    cloudEnabled = false;
+    db = null;
+    setSyncStatus("error");
+    toastFirebaseFallback("Αποτυχία αρχικοποίησης Firebase — τοπική λειτουργία.");
+    return false;
+  }
+}
+
+function upsertPalletsToCloud(ids) {
+  if (!cloudEnabled || !db || applyingRemoteSnapshot) return;
+  const unique = Array.from(new Set((ids || []).filter(Boolean)));
+  unique.forEach((id) => {
+    const p = pallets.find((x) => x.id === id);
+    if (!p) return;
+    db.collection("pallets").doc(id).set(palletToFirestoreDoc(p), { merge: true }).catch((err) => {
+      console.error("Firestore set failed:", id, err);
+      setSyncStatus("error");
+    });
+  });
+}
+
+function deletePalletsFromCloud(ids) {
+  if (!cloudEnabled || !db || applyingRemoteSnapshot) return;
+  const unique = Array.from(new Set((ids || []).filter(Boolean)));
+  unique.forEach((id) => {
+    db.collection("pallets").doc(id).delete().catch((err) => {
+      console.error("Firestore delete failed:", id, err);
+      setSyncStatus("error");
+    });
+  });
+}
+
+/**
+ * Persist pallets. options: { upsertIds?: string[], deleteIds?: string[] }
+ * Always mirrors to localStorage. When cloud enabled, upserts/deletes changed docs.
+ */
+function savePalletsToStorage(options) {
+  const opts = options || {};
+  mirrorPalletsToLocalCache();
+
+  if (cloudEnabled && db && !applyingRemoteSnapshot) {
+    const hasDelete = Array.isArray(opts.deleteIds);
+    const hasUpsert = Array.isArray(opts.upsertIds);
+    if (hasDelete && opts.deleteIds.length) {
+      deletePalletsFromCloud(opts.deleteIds);
+    }
+    if (hasUpsert) {
+      upsertPalletsToCloud(opts.upsertIds);
+    } else if (!hasDelete) {
+      // Neither specified: upsert all (legacy / bulk)
+      upsertPalletsToCloud(pallets.map((p) => p.id));
+    }
+  }
+
   updateStats();
   populateSimulators();
 }
 
 function updateStats() {
   const total = pallets.length;
-  const assigned = pallets.filter(p => p.shelf !== null && p.shelf !== '').length;
+  const assigned = pallets.filter(p => p.shelf !== null && p.shelf !== "").length;
   const unassigned = total - assigned;
 
-  document.getElementById('statTotalPallets').innerText = total;
-  document.getElementById('statAssignedPallets').innerText = assigned;
-  document.getElementById('statUnassignedPallets').innerText = unassigned;
+  const elTotal = document.getElementById("statTotalPallets");
+  const elAssigned = document.getElementById("statAssignedPallets");
+  const elUnassigned = document.getElementById("statUnassignedPallets");
+  if (elTotal) elTotal.innerText = total;
+  if (elAssigned) elAssigned.innerText = assigned;
+  if (elUnassigned) elUnassigned.innerText = unassigned;
 }
 
 /* ==========================================================================
@@ -167,7 +326,7 @@ function handleCreatePallet(e) {
     showToast(`Δημιουργήθηκε επιτυχώς η παλέτα ${palletIdInput}`, 'success');
   }
 
-  savePalletsToStorage();
+  savePalletsToStorage({ upsertIds: [palletIdInput] });
   renderInventoryTable();
   activePalletForLabel = palletObj;
 
@@ -351,7 +510,7 @@ function confirmPairing() {
     p.pairedAt = new Date().toISOString();
   }
 
-  savePalletsToStorage();
+  savePalletsToStorage({ upsertIds: [p.id] });
   renderInventoryTable();
   addRecentPair(p.customer, p.id, p.shelf);
 
@@ -838,7 +997,7 @@ function quickPairRow(palletId) {
 function deletePalletRow(palletId) {
   if (confirm(`Είστε σίγουροι ότι θέλετε να διαγράψετε την παλέτα ${palletId};`)) {
     pallets = pallets.filter(x => x.id !== palletId);
-    savePalletsToStorage();
+    savePalletsToStorage({ deleteIds: [palletId] });
     renderInventoryTable();
     showToast(`Διαγράφηκε η παλέτα ${palletId}`, 'success');
   }
@@ -972,13 +1131,15 @@ function seedSampleData(notify = true) {
     { id: 'PL-1105', customer: 'TECHNO PACK', shelf: null, createdAt: new Date().toISOString() }
   ];
 
+  const addedIds = [];
   samplePallets.forEach(sample => {
     if (!pallets.some(p => p.id === sample.id)) {
       pallets.push(sample);
+      addedIds.push(sample.id);
     }
   });
 
-  savePalletsToStorage();
+  savePalletsToStorage({ upsertIds: addedIds });
   renderInventoryTable();
 
   if (notify) {

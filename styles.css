@@ -129,6 +129,40 @@ body {
   color: var(--emerald);
 }
 
+/* Sync status chip */
+.sync-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 30px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid var(--border-color);
+  background: rgba(30, 41, 59, 0.55);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.sync-chip.sync-online {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+}
+.sync-chip.sync-local {
+  color: #94a3b8;
+}
+.sync-chip.sync-error {
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.4);
+  background: rgba(244, 63, 94, 0.12);
+}
+.sync-chip.sync-connecting {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+}
+
 /* Nav Tabs */
 .nav-tabs {
   display: flex;

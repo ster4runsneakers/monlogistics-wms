@@ -64,6 +64,7 @@
 
       <!-- Live Counters -->
       <div class="stats-bar">
+        <span id="syncStatus" class="sync-chip sync-local">Τοπικά</span>
         <div class="stat-chip">
           <i data-lucide="boxes" style="width: 14px; color: #818cf8;"></i>
           <span>Παλέτες:</span>
@@ -410,8 +411,11 @@
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <!-- App Script -->
-  <!-- cache-bust: cam2 -->
-  <script src="app.js?v=cam2"></script>
+  <!-- Firebase (compat) + config + app -->
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js?v=fb1"></script>
+  <!-- cache-bust: fb1 -->
+  <script src="app.js?v=fb1"></script>
 </body>
 </html>
