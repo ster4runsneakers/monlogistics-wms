@@ -1126,12 +1126,12 @@ function renderInventoryTable() {
       <td>${shelfBadgeHtml}</td>
       <td style="color: var(--text-muted); font-size: 0.85rem;">${dateStr}</td>
       <td style="text-align: right;">
-        <div style="display: flex; gap: 0.4rem; justify-content: flex-end;">
+        <div class="inventory-row-actions">
           <button type="button" class="btn btn-secondary btn-sm" data-action="print" data-id="${safeId}" title="Εκτύπωση Ετικέτας">
             <i data-lucide="printer" style="width: 14px;"></i>
           </button>
-          <button type="button" class="btn btn-secondary btn-sm" data-action="edit" data-id="${safeId}" title="Επεξεργασία">
-            <i data-lucide="pencil" style="width: 14px;"></i>
+          <button type="button" class="btn btn-secondary btn-sm btn-edit-pallet" data-action="edit" data-id="${safeId}" title="Επεξεργασία">
+            <i data-lucide="pencil" style="width: 14px;"></i> <span>Επεξ.</span>
           </button>
           <button type="button" class="btn btn-primary btn-sm" data-action="pair" data-id="${safeId}" title="Σύνδεση/Αλλαγή Θέσης">
             <i data-lucide="link" style="width: 14px;"></i>

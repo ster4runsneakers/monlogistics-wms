@@ -829,6 +829,36 @@ body {
   background: rgba(30, 41, 59, 0.6);
 }
 
+.inventory-table .btn-edit-pallet {
+  border-color: rgba(129, 140, 248, 0.55);
+  color: #a5b4fc;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.inventory-table .btn-edit-pallet:hover {
+  border-color: rgba(129, 140, 248, 0.85);
+  background: rgba(99, 102, 241, 0.18);
+  color: #c7d2fe;
+}
+
+.inventory-table .inventory-row-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+@media (max-width: 1100px) {
+  .inventory-table td:last-child .inventory-row-actions {
+    justify-content: flex-start;
+  }
+  .inventory-table td:last-child .btn {
+    flex-wrap: wrap;
+  }
+}
+
 /* Badges */
 .badge-shelf {
   display: inline-flex;
