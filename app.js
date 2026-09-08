@@ -780,32 +780,24 @@ function escapeHtml(str) {
 }
 
 /**
- * Safe QR renderer — never throws; falls back on any library/overflow error.
+ * Safe QR renderer — always shows an <img> (api.qrserver.com).
+ * SVG fallback only if the remote image fails to load.
+ * <img> clones fine with cloneNode for print.
  */
 function renderQRCode(container, text, size) {
   if (!container) return;
   container.innerHTML = '';
   const qrSize = size || 140;
 
-  if (!window.QRCode) {
-    renderFallbackQR(container, text);
-    return;
-  }
-
-  try {
-    new QRCode(container, {
-      text: text,
-      width: qrSize,
-      height: qrSize,
-      colorDark: '#000000',
-      colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.M
-    });
-  } catch (err) {
-    console.error('QRCode render failed, using fallback:', err);
+  const img = document.createElement('img');
+  img.alt = 'QR';
+  img.style.cssText = `display:block;margin:0 auto;width:${qrSize}px;height:${qrSize}px;`;
+  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&ecc=M&margin=2&data=${encodeURIComponent(text)}`;
+  img.onerror = () => {
     container.innerHTML = '';
     renderFallbackQR(container, text);
-  }
+  };
+  container.appendChild(img);
 }
 
 function renderFallbackQR(container, text) {

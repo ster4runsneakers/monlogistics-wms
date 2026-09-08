@@ -692,6 +692,13 @@ body {
     align-items: center;
     padding: 20px;
   }
+  #printArea img {
+    display: block !important;
+    max-width: 100% !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   .pallet-label, .shelf-tag-card {
     width: 100% !important;
     max-width: 400px !important;
