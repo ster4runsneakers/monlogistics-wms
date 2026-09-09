@@ -1692,3 +1692,85 @@ body {
   }
 }
 
+
+/* Import from Excel / CSV */
+.pick-import-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1rem;
+  margin-top: 0.25rem;
+}
+
+.pick-import-preview-wrap {
+  margin-top: 0.5rem;
+}
+
+.pick-import-table-scroll {
+  max-height: 280px;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.pick-import-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.pick-import-table th,
+.pick-import-table td {
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.4);
+  vertical-align: middle;
+}
+
+.pick-import-table th {
+  position: sticky;
+  top: 0;
+  background: rgba(30, 41, 59, 0.95);
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  z-index: 1;
+}
+
+.pick-import-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.pick-import-table .pick-import-name-input,
+.pick-import-table .pick-import-qty-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.88rem;
+}
+
+.pick-import-table .pick-import-qty-input {
+  max-width: 110px;
+}
+
+.pick-import-table .pick-import-idx {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  width: 2rem;
+}
+
+@media (max-width: 640px) {
+  .pick-import-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .glass-card.pick-import-card {
+    padding: 1.25rem;
+  }
+
+  .pick-import-table .pick-import-qty-input {
+    max-width: 88px;
+  }
+}

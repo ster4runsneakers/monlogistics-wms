@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=pick1">
+  <link rel="stylesheet" href="styles.css?v=pick2">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -491,6 +491,58 @@
           </div>
         </div>
 
+        <!-- Import from Excel / CSV -->
+        <div class="glass-card pick-import-card">
+          <h2 class="card-title">
+            <i data-lucide="file-spreadsheet" style="color: var(--emerald);"></i>
+            Εισαγωγή από Excel / CSV
+          </h2>
+          <p class="card-desc">Ανεβάστε λίστα από λογιστήριο (.xlsx, .xls, .csv) — προεπισκόπηση και δημιουργία λίστας picking χωρίς χειροκίνητη πληκτρολόγηση.</p>
+
+          <div class="form-group">
+            <label class="form-label" for="pickImportFile">Αρχείο *</label>
+            <input type="file" id="pickImportFile" class="form-input" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+          </div>
+
+          <div id="pickImportMeta" class="pick-import-meta" hidden>
+            <div class="form-group">
+              <label class="form-label" for="pickImportCustomer">Πελάτης *</label>
+              <input type="text" id="pickImportCustomer" class="form-input" placeholder="Όνομα πελάτη" autocomplete="organization">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="pickImportOrderRef">Αρ. παραγγελίας *</label>
+              <input type="text" id="pickImportOrderRef" class="form-input" placeholder="π.χ. ORD-1024">
+            </div>
+          </div>
+
+          <div id="pickImportPreviewWrap" class="pick-import-preview-wrap" hidden>
+            <label class="form-label">Προεπισκόπηση γραμμών (<span id="pickImportCount">0</span>)</label>
+            <div class="pick-import-table-scroll">
+              <table class="pick-import-table" id="pickImportTable">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Προϊόν</th>
+                    <th>Ποσότητα</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="pickImportTbody"></tbody>
+              </table>
+            </div>
+            <div class="pick-line-actions" style="margin-top: 0.85rem;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="clearPickImport()">
+                <i data-lucide="x" style="width: 14px;"></i>
+                Καθαρισμός
+              </button>
+              <button type="button" class="btn btn-primary" onclick="createPickListFromImport()">
+                <i data-lucide="clipboard-check" style="width: 14px;"></i>
+                Δημιουργία λίστας από αρχείο
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Open lists -->
         <div class="glass-card pick-open-card">
           <h2 class="card-title">
@@ -590,7 +642,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="firebase-config.js?v=fb1"></script>
-  <!-- cache-bust: pick1 -->
-  <script src="app.js?v=pick1"></script>
+  <!-- SheetJS (Excel .xlsx/.xls) — must load before app.js -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <!-- cache-bust: pick2 -->
+  <script src="app.js?v=pick2"></script>
 </body>
 </html>

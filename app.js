@@ -29,6 +29,9 @@ let shelfTagDelegatedBound = false;
 // Pick lists state
 const PICKLISTS_KEY = 'monlog_picklists_v1';
 let pickLists = [];
+/** @type {{ productName: string, qtyNeeded: number }[]} */
+let pickImportLines = [];
+let pickImportMeta = { customer: '', orderRef: '' };
 let activePickListId = null;
 let firestorePickUnsub = null;
 let applyingPickRemoteSnapshot = false;
@@ -2201,6 +2204,11 @@ function confirmPick(listId, lineId, palletId, qty) {
 function initPickTabUI() {
   resetPickLineRows();
   renderPickTab();
+  const fileEl = document.getElementById('pickImportFile');
+  if (fileEl && !fileEl.dataset.bound) {
+    fileEl.dataset.bound = '1';
+    fileEl.addEventListener('change', onPickImportFileChange);
+  }
 }
 
 function addPickLineRow(prefill) {
@@ -2255,22 +2263,7 @@ function collectPickLineInputs() {
   return lines;
 }
 
-function createPickList() {
-  const customerEl = document.getElementById('pickCustomerInput');
-  const orderEl = document.getElementById('pickOrderRefInput');
-  const customer = customerEl ? customerEl.value.trim() : '';
-  const orderRef = orderEl ? orderEl.value.trim() : '';
-  const lineInputs = collectPickLineInputs();
-
-  if (!customer || !orderRef) {
-    showToast('Συμπληρώστε πελάτη και αρ. παραγγελίας', 'error');
-    return;
-  }
-  if (!lineInputs.length) {
-    showToast('Προσθέστε τουλάχιστον μία γραμμή με όνομα και ποσότητα', 'error');
-    return;
-  }
-
+function commitNewPickList(customer, orderRef, lineInputs) {
   const now = new Date().toISOString();
   const pl = normalizePickList({
     id: generatePickListId(),
@@ -2291,13 +2284,441 @@ function createPickList() {
 
   pickLists.unshift(pl);
   savePickListsToStorage({ upsertIds: [pl.id] });
+  activePickListId = pl.id;
+  renderPickTab();
+  showToast(`Δημιουργήθηκε λίστα ${pl.id}`, 'success');
+  return pl;
+}
+
+function createPickList() {
+  const customerEl = document.getElementById('pickCustomerInput');
+  const orderEl = document.getElementById('pickOrderRefInput');
+  const customer = customerEl ? customerEl.value.trim() : '';
+  const orderRef = orderEl ? orderEl.value.trim() : '';
+  const lineInputs = collectPickLineInputs();
+
+  if (!customer || !orderRef) {
+    showToast('Συμπληρώστε πελάτη και αρ. παραγγελίας', 'error');
+    return;
+  }
+  if (!lineInputs.length) {
+    showToast('Προσθέστε τουλάχιστον μία γραμμή με όνομα και ποσότητα', 'error');
+    return;
+  }
+
+  commitNewPickList(customer, orderRef, lineInputs);
 
   if (customerEl) customerEl.value = '';
   if (orderEl) orderEl.value = '';
   resetPickLineRows();
-  activePickListId = pl.id;
-  renderPickTab();
-  showToast(`Δημιουργήθηκε λίστα ${pl.id}`, 'success');
+}
+
+
+/* --------------------------------------------------------------------------
+   Excel / CSV import → pick list
+   -------------------------------------------------------------------------- */
+
+const IMPORT_PRODUCT_HEADERS = [
+  'προϊόν', 'προϊον', 'ειδος', 'είδος', 'περιγραφή', 'περιγραφη',
+  'description', 'product', 'item', 'name', 'όνομα', 'ονομα', 'κωδικός', 'κωδικος', 'code'
+];
+const IMPORT_QTY_HEADERS = [
+  'ποσότητα', 'ποσοτητα', 'πος', 'ποσ', 'qty', 'quantity', 'τεμ', 'τμχ', 'pcs', 'ποσό', 'ποσο'
+];
+const IMPORT_CUSTOMER_HEADERS = [
+  'πελάτης', 'πελατης', 'customer', 'client', 'πελάτη', 'πελατη'
+];
+const IMPORT_ORDER_HEADERS = [
+  'παραγγελία', 'παραγγελια', 'order', 'αρ.παραγγελίας', 'αρ παραγγελίας', 'αρ. παραγγελίας',
+  'document', 'δοκ', 'doc', 'αρ.παραγγελιας', 'orderref', 'order ref', 'ref'
+];
+
+function normalizeImportHeader(h) {
+  return String(h == null ? '' : h)
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function headerMatches(normalized, synonyms) {
+  if (!normalized) return false;
+  const compact = normalized.replace(/[.\-_]/g, ' ').replace(/\s+/g, ' ').trim();
+  return synonyms.some((s) => {
+    const syn = normalizeImportHeader(s);
+    if (!syn) return false;
+    const synCompact = syn.replace(/[.\-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (compact === synCompact || normalized === syn) return true;
+    // Short tokens (item, name, qty, pcs…) must be exact to avoid matching data rows
+    if (synCompact.length <= 4) return false;
+    // Longer synonyms: allow contains either way (e.g. "αρ παραγγελίας", "ποσότητα")
+    if (compact.includes(synCompact) || synCompact.includes(compact)) return true;
+    return false;
+  });
+}
+
+function parseImportQty(raw) {
+  if (raw == null || raw === '') return NaN;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : NaN;
+  let s = String(raw).trim().replace(/\s/g, '');
+  if (!s) return NaN;
+  // Greek Excel: 1.234,56 or 12,5
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.');
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function detectCsvDelimiter(firstLine) {
+  const commas = (firstLine.match(/,/g) || []).length;
+  const semis = (firstLine.match(/;/g) || []).length;
+  return semis > commas ? ';' : ',';
+}
+
+function parseCsvText(text) {
+  const cleaned = String(text || '').replace(/^\uFEFF/, '');
+  const firstNL = cleaned.search(/\r?\n/);
+  const firstLine = firstNL === -1 ? cleaned : cleaned.slice(0, firstNL);
+  const delim = detectCsvDelimiter(firstLine);
+
+  const out = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+  let i = 0;
+  while (i < cleaned.length) {
+    const ch = cleaned[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (cleaned[i + 1] === '"') {
+          cell += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      cell += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (ch === delim) {
+      row.push(cell);
+      cell = '';
+      i += 1;
+      continue;
+    }
+    if (ch === '\r') {
+      i += 1;
+      continue;
+    }
+    if (ch === '\n') {
+      row.push(cell);
+      out.push(row);
+      row = [];
+      cell = '';
+      i += 1;
+      continue;
+    }
+    cell += ch;
+    i += 1;
+  }
+  if (cell.length || row.length) {
+    row.push(cell);
+    out.push(row);
+  }
+  return out.filter((r) => r.some((c) => String(c).trim() !== ''));
+}
+
+function mapImportColumns(headerRow) {
+  const norms = headerRow.map(normalizeImportHeader);
+  let productIdx = -1;
+  let qtyIdx = -1;
+  let customerIdx = -1;
+  let orderIdx = -1;
+
+  norms.forEach((h, idx) => {
+    if (productIdx < 0 && headerMatches(h, IMPORT_PRODUCT_HEADERS)) productIdx = idx;
+    if (qtyIdx < 0 && headerMatches(h, IMPORT_QTY_HEADERS)) qtyIdx = idx;
+    if (customerIdx < 0 && headerMatches(h, IMPORT_CUSTOMER_HEADERS)) customerIdx = idx;
+    if (orderIdx < 0 && headerMatches(h, IMPORT_ORDER_HEADERS)) orderIdx = idx;
+  });
+
+  const looksLikeHeader = productIdx >= 0 || qtyIdx >= 0 || customerIdx >= 0 || orderIdx >= 0;
+  return { productIdx, qtyIdx, customerIdx, orderIdx, looksLikeHeader, norms };
+}
+
+function extractLinesFromMatrix(matrix) {
+  if (!matrix || !matrix.length) {
+    return { lines: [], customer: '', orderRef: '', error: 'Το αρχείο είναι κενό' };
+  }
+
+  const headerMap = mapImportColumns(matrix[0]);
+  let startRow = 0;
+  let productIdx = headerMap.productIdx;
+  let qtyIdx = headerMap.qtyIdx;
+  let customerIdx = headerMap.customerIdx;
+  let orderIdx = headerMap.orderIdx;
+
+  // If product header missing but qty found: use the single remaining text column
+  if (qtyIdx >= 0 && productIdx < 0) {
+    const used = new Set([qtyIdx, customerIdx, orderIdx].filter((x) => x >= 0));
+    const candidates = [];
+    headerMap.norms.forEach((h, idx) => {
+      if (used.has(idx)) return;
+      if (!h) return;
+      candidates.push(idx);
+    });
+    if (candidates.length === 1) productIdx = candidates[0];
+  }
+
+  const hasMappedCols = productIdx >= 0 && qtyIdx >= 0;
+  if (hasMappedCols) {
+    startRow = 1;
+  } else {
+    // Headers missing / unrecognized — first two columns as product + qty
+    productIdx = 0;
+    qtyIdx = matrix[0].length > 1 ? 1 : -1;
+    customerIdx = -1;
+    orderIdx = -1;
+    startRow = 0;
+  }
+
+  if (productIdx < 0 || qtyIdx < 0) {
+    return {
+      lines: [],
+      customer: '',
+      orderRef: '',
+      error: 'Δεν βρέθηκαν στήλες προϊόντος / ποσότητας. Χρησιμοποιήστε κεφαλίδες όπως «Προϊόν» και «Ποσότητα».'
+    };
+  }
+
+  const lines = [];
+  let customer = '';
+  let orderRef = '';
+
+  for (let r = startRow; r < matrix.length; r++) {
+    const row = matrix[r] || [];
+    const name = String(row[productIdx] != null ? row[productIdx] : '').trim();
+    const qty = parseImportQty(row[qtyIdx]);
+    if (!name && (row[qtyIdx] == null || String(row[qtyIdx]).trim() === '')) continue;
+    if (!name) continue;
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    lines.push({ productName: name, qtyNeeded: qty });
+
+    if (customerIdx >= 0 && !customer) {
+      const c = String(row[customerIdx] != null ? row[customerIdx] : '').trim();
+      if (c) customer = c;
+    }
+    if (orderIdx >= 0 && !orderRef) {
+      const o = String(row[orderIdx] != null ? row[orderIdx] : '').trim();
+      if (o) orderRef = o;
+    }
+  }
+
+  // Also try customer/order from header row values if single-value meta columns somehow — skip
+  if (!lines.length) {
+    return {
+      lines: [],
+      customer,
+      orderRef,
+      error: 'Δεν βρέθηκαν έγκυρες γραμμές (προϊόν + θετική ποσότητα)'
+    };
+  }
+
+  return { lines, customer, orderRef, error: null };
+}
+
+function matrixFromExcelArrayBuffer(buf) {
+  if (typeof XLSX === 'undefined') {
+    throw new Error('Η βιβλιοθήκη SheetJS δεν φορτώθηκε');
+  }
+  const wb = XLSX.read(buf, { type: 'array', cellDates: false, raw: false });
+  const sheetName = wb.SheetNames && wb.SheetNames[0];
+  if (!sheetName) throw new Error('Το Excel δεν έχει φύλλα');
+  const sheet = wb.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+  return matrix;
+}
+
+function clearPickImport(opts) {
+  const keepFile = opts && opts.keepFile;
+  pickImportLines = [];
+  pickImportMeta = { customer: '', orderRef: '' };
+  const meta = document.getElementById('pickImportMeta');
+  const wrap = document.getElementById('pickImportPreviewWrap');
+  const tbody = document.getElementById('pickImportTbody');
+  const count = document.getElementById('pickImportCount');
+  const cust = document.getElementById('pickImportCustomer');
+  const ord = document.getElementById('pickImportOrderRef');
+  if (meta) meta.hidden = true;
+  if (wrap) wrap.hidden = true;
+  if (tbody) tbody.innerHTML = '';
+  if (count) count.textContent = '0';
+  if (cust) cust.value = '';
+  if (ord) ord.value = '';
+  if (!keepFile) {
+    const fileEl = document.getElementById('pickImportFile');
+    if (fileEl) fileEl.value = '';
+  }
+}
+
+function renderPickImportPreview() {
+  const meta = document.getElementById('pickImportMeta');
+  const wrap = document.getElementById('pickImportPreviewWrap');
+  const tbody = document.getElementById('pickImportTbody');
+  const count = document.getElementById('pickImportCount');
+  const cust = document.getElementById('pickImportCustomer');
+  const ord = document.getElementById('pickImportOrderRef');
+  if (!tbody || !wrap || !meta) return;
+
+  if (cust && document.activeElement !== cust) cust.value = pickImportMeta.customer || '';
+  if (ord && document.activeElement !== ord) ord.value = pickImportMeta.orderRef || '';
+
+  meta.hidden = false;
+  wrap.hidden = false;
+  if (count) count.textContent = String(pickImportLines.length);
+
+  tbody.innerHTML = pickImportLines.map((ln, idx) => `
+    <tr data-idx="${idx}">
+      <td class="pick-import-idx">${idx + 1}</td>
+      <td>
+        <input type="text" class="form-input pick-import-name-input" value="${escapeHtml(ln.productName)}" data-idx="${idx}" onchange="updatePickImportLine(${idx}, 'productName', this.value)" oninput="updatePickImportLine(${idx}, 'productName', this.value)">
+      </td>
+      <td>
+        <input type="number" class="form-input pick-import-qty-input" min="0.01" step="any" inputmode="decimal" value="${escapeHtml(String(ln.qtyNeeded))}" data-idx="${idx}" onchange="updatePickImportLine(${idx}, 'qtyNeeded', this.value)" oninput="updatePickImportLine(${idx}, 'qtyNeeded', this.value)">
+      </td>
+      <td>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="removePickImportLine(${idx})" title="Αφαίρεση">
+          <i data-lucide="trash-2" style="width: 14px;"></i>
+        </button>
+      </td>
+    </tr>
+  `).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function updatePickImportLine(idx, field, value) {
+  const ln = pickImportLines[idx];
+  if (!ln) return;
+  if (field === 'productName') {
+    ln.productName = String(value || '').trim();
+  } else if (field === 'qtyNeeded') {
+    const n = parseImportQty(value);
+    ln.qtyNeeded = Number.isFinite(n) ? n : NaN;
+  }
+}
+
+function removePickImportLine(idx) {
+  if (idx < 0 || idx >= pickImportLines.length) return;
+  pickImportLines.splice(idx, 1);
+  if (!pickImportLines.length) {
+    clearPickImport();
+    showToast('Δεν απέμειναν γραμμές — καθαρίστηκε η προεπισκόπηση', 'error');
+    return;
+  }
+  renderPickImportPreview();
+}
+
+async function onPickImportFileChange(ev) {
+  const file = ev && ev.target && ev.target.files && ev.target.files[0];
+  if (!file) {
+    clearPickImport();
+    return;
+  }
+
+  const name = (file.name || '').toLowerCase();
+  const isCsv = name.endsWith('.csv') || (file.type && file.type.indexOf('csv') >= 0);
+  const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
+
+  if (!isCsv && !isExcel) {
+    showToast('Μη υποστηριζόμενος τύπος αρχείου. Χρησιμοποιήστε .xlsx, .xls ή .csv', 'error');
+    clearPickImport();
+    return;
+  }
+
+  try {
+    let matrix;
+    if (isCsv) {
+      const text = await file.text();
+      matrix = parseCsvText(text);
+    } else {
+      const buf = await file.arrayBuffer();
+      matrix = matrixFromExcelArrayBuffer(buf);
+    }
+
+    const result = extractLinesFromMatrix(matrix);
+    if (result.error) {
+      clearPickImport({ keepFile: true });
+      showToast(result.error, 'error');
+      return;
+    }
+
+    pickImportLines = result.lines.map((ln) => ({
+      productName: ln.productName,
+      qtyNeeded: ln.qtyNeeded
+    }));
+    pickImportMeta = {
+      customer: result.customer || '',
+      orderRef: result.orderRef || ''
+    };
+    renderPickImportPreview();
+    showToast(`Διαβάστηκαν ${pickImportLines.length} γραμμές από το αρχείο`, 'success');
+  } catch (err) {
+    console.error('Pick import failed:', err);
+    clearPickImport({ keepFile: true });
+    showToast(err && err.message ? err.message : 'Αποτυχία ανάγνωσης αρχείου', 'error');
+  }
+}
+
+function createPickListFromImport() {
+  const custEl = document.getElementById('pickImportCustomer');
+  const ordEl = document.getElementById('pickImportOrderRef');
+  const customer = custEl ? custEl.value.trim() : (pickImportMeta.customer || '');
+  const orderRef = ordEl ? ordEl.value.trim() : (pickImportMeta.orderRef || '');
+
+  // Sync editable preview rows
+  const tbody = document.getElementById('pickImportTbody');
+  if (tbody) {
+    tbody.querySelectorAll('tr[data-idx]').forEach((tr) => {
+      const idx = Number(tr.getAttribute('data-idx'));
+      const nameEl = tr.querySelector('.pick-import-name-input');
+      const qtyEl = tr.querySelector('.pick-import-qty-input');
+      if (!pickImportLines[idx]) return;
+      pickImportLines[idx].productName = nameEl ? nameEl.value.trim() : '';
+      pickImportLines[idx].qtyNeeded = qtyEl ? parseImportQty(qtyEl.value) : NaN;
+    });
+  }
+
+  if (!customer || !orderRef) {
+    showToast('Συμπληρώστε πελάτη και αρ. παραγγελίας', 'error');
+    return;
+  }
+
+  const lineInputs = pickImportLines
+    .map((ln) => ({
+      productName: String(ln.productName || '').trim(),
+      qtyNeeded: Number(ln.qtyNeeded)
+    }))
+    .filter((ln) => ln.productName && Number.isFinite(ln.qtyNeeded) && ln.qtyNeeded > 0);
+
+  if (!lineInputs.length) {
+    showToast('Δεν υπάρχουν έγκυρες γραμμές για δημιουργία λίστας', 'error');
+    return;
+  }
+
+  commitNewPickList(customer, orderRef, lineInputs);
+  clearPickImport();
 }
 
 function openPickListDetail(listId) {
