@@ -61,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Render initial table & statistics (cloud snapshot may refresh again)
   renderInventoryTable();
+  renderProductSearch();
   updateStats();
   populateSimulators();
   updateLinkUI();
@@ -242,6 +243,7 @@ function subscribePallets() {
     pallets = sortPalletsByCreatedDesc(next);
     mirrorPalletsToLocalCache();
     renderInventoryTable();
+    renderProductSearch();
     updateStats();
     populateSimulators();
     renderPickTab();
@@ -1323,6 +1325,159 @@ function onQrScanned(text) {
 }
 
 /* ==========================================================================
+   TAB 3a: PRODUCT ACROSS-PALLETS SEARCH
+   ========================================================================== */
+
+/** Fold Greek/Latin text for search: lowercase + strip diacritics (φέτα ≈ φετα). */
+function foldSearchText(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/ς/g, 'σ')
+    .trim();
+}
+
+/** Partial, case-insensitive match of query against item name */
+function productNamePartialMatch(itemName, query) {
+  const a = foldSearchText(itemName);
+  const q = foldSearchText(query);
+  if (!a || !q) return false;
+  return a.includes(q);
+}
+
+function locationSortKey(p) {
+  if (!p || !p.shelf) return '~~~';
+  return String(p.shelf).toLowerCase();
+}
+
+/**
+ * Find every (pallet, matching item) hit for a product name query.
+ * Default: in_stock only. FEFO sort (earliest expiry first), then location, then pallet id.
+ */
+function findProductAcrossPallets(query, includeShipped) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  const hits = [];
+  for (const p of pallets) {
+    if (!includeShipped && !isInStock(p)) continue;
+    const items = normalizeItems(p.items);
+    for (const it of items) {
+      if (!productNamePartialMatch(it.name, q)) continue;
+      hits.push({ pallet: p, item: it });
+    }
+  }
+  hits.sort((a, b) => {
+    const ea = a.item.expiry || '9999-99-99';
+    const eb = b.item.expiry || '9999-99-99';
+    if (ea !== eb) return ea < eb ? -1 : 1;
+    const la = locationSortKey(a.pallet);
+    const lb = locationSortKey(b.pallet);
+    if (la !== lb) return la < lb ? -1 : 1;
+    const ida = String(a.pallet.id || '');
+    const idb = String(b.pallet.id || '');
+    return ida < idb ? -1 : ida > idb ? 1 : 0;
+  });
+  return hits;
+}
+
+function productSearchExpiryBadgeHtml(expiry) {
+  if (!expiry) return '';
+  const st = expiryStatus(expiry);
+  const formatted = formatExpiryEl(expiry);
+  if (st === 'expired') {
+    return `<span class="badge-expiry badge-expired">Ληγμένο · ${escapeHtml(formatted)}</span>`;
+  }
+  if (st === 'soon') {
+    return `<span class="badge-expiry badge-soon">Λήγει · ${escapeHtml(formatted)}</span>`;
+  }
+  return `<span class="product-hit-expiry-ok">λήξη ${escapeHtml(formatted)}</span>`;
+}
+
+function productSearchLocationHtml(p) {
+  if (p.status === 'shipped') {
+    return `<span class="badge-shipped">🚚 Εξαχθείσα</span>`;
+  }
+  if (p.shelf) {
+    if (p.locationType === 'aisle') {
+      const row = p.aisleRow || (parseAisleLocationCode(p.shelf) || {}).row || '?';
+      return `<span class="badge-aisle" title="Διάδρομος">🛤️ Διάδρομος σειρά ${escapeHtml(String(row))} · ${escapeHtml(p.shelf)}</span>`;
+    }
+    return `<span class="badge-shelf" title="Ράφι">📍 Ράφι ${escapeHtml(p.shelf)}</span>`;
+  }
+  return `<span class="badge-unassigned">⚠️ Εκτός Ραφιού</span>`;
+}
+
+function filterProductSearch() {
+  renderProductSearch();
+}
+
+function renderProductSearch() {
+  const resultsEl = document.getElementById('productSearchResults');
+  const metaEl = document.getElementById('productSearchMeta');
+  const inputEl = document.getElementById('productSearchInput');
+  const includeEl = document.getElementById('productSearchIncludeShipped');
+  if (!resultsEl) return;
+
+  const query = inputEl ? inputEl.value : '';
+  const includeShipped = !!(includeEl && includeEl.checked);
+  const trimmed = String(query || '').trim();
+
+  if (!trimmed) {
+    resultsEl.innerHTML = `
+      <div class="product-search-hint">
+        <i data-lucide="package" style="width: 28px; height: 28px;"></i>
+        <span>Πληκτρολογήστε όνομα προϊόντος για αναζήτηση σε όλες τις παλέτες.</span>
+      </div>`;
+    if (metaEl) {
+      metaEl.hidden = true;
+      metaEl.textContent = '';
+    }
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  const hits = findProductAcrossPallets(trimmed, includeShipped);
+
+  if (metaEl) {
+    metaEl.hidden = false;
+    metaEl.textContent = hits.length === 1
+      ? 'Βρέθηκε 1 αποτέλεσμα (πρώτα όσα λήγουν νωρίτερα)'
+      : `Βρέθηκαν ${hits.length} αποτελέσματα (πρώτα όσα λήγουν νωρίτερα)`;
+  }
+
+  if (hits.length === 0) {
+    resultsEl.innerHTML = `
+      <div class="product-search-empty">
+        <i data-lucide="inbox" style="width: 32px; height: 32px;"></i>
+        <span>Δεν βρέθηκε προϊόν «${escapeHtml(trimmed)}» σε παλέτες${includeShipped ? '' : ' στην αποθήκη'}.</span>
+      </div>`;
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  resultsEl.innerHTML = hits.map(({ pallet: p, item: it }) => {
+    const qtyText = it.qty != null ? String(it.qty) : '—';
+    const customer = p.customer ? `<span class="product-hit-customer">${escapeHtml(p.customer)}</span>` : '';
+    return `
+      <article class="product-hit-card${p.status === 'shipped' ? ' product-hit-shipped' : ''}">
+        <div class="product-hit-top">
+          <span class="product-hit-id">${escapeHtml(p.id)}</span>
+          ${productSearchLocationHtml(p)}
+        </div>
+        <div class="product-hit-name">${escapeHtml(it.name)}</div>
+        <div class="product-hit-meta">
+          <span class="product-hit-qty">Ποσότητα: <strong>${escapeHtml(qtyText)}</strong></span>
+          ${productSearchExpiryBadgeHtml(it.expiry)}
+          ${customer}
+        </div>
+      </article>`;
+  }).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+/* ==========================================================================
    TAB 3: INVENTORY TABLE & SEARCH
    ========================================================================== */
 function renderInventoryTable() {
@@ -1371,6 +1526,7 @@ function renderInventoryTable() {
       </tr>
     `;
     if (window.lucide) lucide.createIcons();
+    renderProductSearch();
     return;
   }
 
@@ -1448,6 +1604,7 @@ function renderInventoryTable() {
   });
 
   if (window.lucide) lucide.createIcons();
+  renderProductSearch();
 }
 
 function filterInventoryTable() {

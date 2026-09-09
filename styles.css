@@ -1774,3 +1774,163 @@ body {
     max-width: 88px;
   }
 }
+
+
+/* ==========================================================================
+   Product across-pallets search (tab Αναζήτηση)
+   ========================================================================== */
+.product-search-card {
+  margin-bottom: 1.25rem;
+}
+
+.product-search-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.product-search-input-wrap {
+  flex: 1;
+  min-width: 200px;
+}
+
+.product-search-input {
+  min-height: 52px;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.product-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  padding: 0.35rem 0.25rem;
+}
+
+.product-search-toggle input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.product-search-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+}
+
+.product-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.product-search-hint,
+.product-search-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  text-align: center;
+  padding: 1.75rem 1rem;
+  color: var(--text-dim);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.35);
+  font-size: 0.92rem;
+}
+
+.product-hit-card {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.9rem 1.1rem;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.product-hit-card.product-hit-shipped {
+  opacity: 0.78;
+}
+
+.product-hit-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  justify-content: space-between;
+}
+
+.product-hit-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 800;
+  font-size: 0.98rem;
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+}
+
+.product-hit-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.3;
+}
+
+.product-hit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.product-hit-qty strong {
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.product-hit-expiry-ok {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.product-hit-customer {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+@media (max-width: 640px) {
+  .product-search-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+
+  .product-search-input {
+    width: 100%;
+    min-height: 52px;
+    font-size: 16px; /* avoid iOS zoom */
+  }
+
+  .product-search-toggle {
+    white-space: normal;
+  }
+
+  .product-hit-card {
+    padding: 0.85rem 0.95rem;
+  }
+}

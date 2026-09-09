@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=pick2">
+  <link rel="stylesheet" href="styles.css?v=prod1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -357,6 +357,39 @@
 
     <!-- TAB 3: SEARCH & INVENTORY TABLE -->
     <section id="tab-inventory" class="tab-content">
+
+      <!-- Product across-pallets search -->
+      <div class="glass-card product-search-card">
+        <h2 class="card-title">
+          <i data-lucide="package-search" style="color: var(--primary);"></i>
+          Αναζήτηση προϊόντος
+        </h2>
+        <p class="card-desc">Γράψτε όνομα προϊόντος και δείτε όλες τις παλέτες στην αποθήκη που το έχουν (θέση, ποσότητα, λήξη).</p>
+
+        <div class="product-search-bar">
+          <div class="search-input-wrapper product-search-input-wrap">
+            <i data-lucide="search" class="search-icon"></i>
+            <input type="text" id="productSearchInput" class="form-input product-search-input"
+              placeholder="π.χ. φέτα, ελαιόλαδο…"
+              autocomplete="off"
+              inputmode="search"
+              oninput="filterProductSearch()">
+          </div>
+          <label class="product-search-toggle" for="productSearchIncludeShipped">
+            <input type="checkbox" id="productSearchIncludeShipped" onchange="filterProductSearch()">
+            <span>συμπεριλάβε και εξαχθείσες</span>
+          </label>
+        </div>
+
+        <div id="productSearchMeta" class="product-search-meta" hidden></div>
+        <div id="productSearchResults" class="product-search-results" aria-live="polite">
+          <div class="product-search-hint">
+            <i data-lucide="package" style="width: 28px; height: 28px;"></i>
+            <span>Πληκτρολογήστε όνομα προϊόντος για αναζήτηση σε όλες τις παλέτες.</span>
+          </div>
+        </div>
+      </div>
+
       <div class="glass-card">
         
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
@@ -644,7 +677,7 @@
   <script src="firebase-config.js?v=fb1"></script>
   <!-- SheetJS (Excel .xlsx/.xls) — must load before app.js -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <!-- cache-bust: pick2 -->
-  <script src="app.js?v=pick2"></script>
+  <!-- cache-bust: prod1 -->
+  <script src="app.js?v=prod1"></script>
 </body>
 </html>
