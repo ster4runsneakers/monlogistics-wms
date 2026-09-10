@@ -2803,7 +2803,13 @@ async function ocrCanvasesGreekEng(canvases, onStatus) {
 function isSlipHeaderOrTotalLine(line) {
   const n = normalizeImportHeader(line);
   if (!n) return true;
-  if (/σύνολο|συνολο|total|υποσυνολο|υποσύνολο/.test(n)) return true;
+  if (/σύνολο|συνολο|total|υποσυνολο|υποσύνολο|διακινουμενη|διακινούμενη/.test(n)) return true;
+  if (/εκδοση|έκδοση|παραλαβη|παραλαβή|camscanner/.test(n)) return true;
+  if (/^παραγγελια\b/.test(n) && !/30-\d{6,}/.test(line)) return true;
+  if (/(αλφατασκ|alfatask|θεσσαλονικ|αθην|οδος|οδός|τηλ\.|αφμ|ισωνυμ|ισώνυμ)/.test(n)
+      && !/30-\d{6,}/.test(line)) {
+    return true;
+  }
   if (/κωδικος|κωδικός|περιγραφη|περιγραφή|ποσοτητα|ποσότητα|αποθηκευτικη|αποθηκευτική|θεση|θέση/.test(n)
       && !/\d{2}-\d{5,}/.test(line) && !/\d+[.,]\d{2}/.test(line)) {
     // header-ish without product codes / qty decimals
@@ -2812,20 +2818,67 @@ function isSlipHeaderOrTotalLine(line) {
   return false;
 }
 
+/** Normalize OCR dashes and whitespace for slip parsing. */
+function normalizeSlipText(text) {
+  return String(text || '')
+    .replace(/\r/g, '')
+    .replace(/[–—−]/g, '-') // en-dash / em-dash / minus → hyphen
+    .replace(/\u00a0/g, ' ');
+}
+
+/**
+ * From a product segment (text after the 30- code), extract description + qty.
+ * Qty prefers trailing 1.00 / 3.00, else last plain integer after ΚΙΒΩΤ / loc.
+ */
+function extractDescAndQtyFromSlipSegment(segment) {
+  let s = String(segment || '').replace(/\s+/g, ' ').trim();
+  // Cut trailer / totals that OCR glued onto the last product
+  // Avoid \\b — it does not work with Greek letters in JS.
+  s = s.replace(/\s+(?:Διακινούμενη|ΔΙΑΚΙΝΟΥΜΕΝΗ|Διακινουμενη|ΕΚΔΟΣΗ|ΈΚΔΟΣΗ|ΠΑΡΑΛΑΒΗ|CamScanner|Σύνολο|ΣΥΝΟΛΟ|TOTAL)(?:\s|$)[\s\S]*$/i, '').trim();
+
+  let qtyRaw = '';
+  // Prefer decimal qty at end (1.00, 3.00)
+  let qm = s.match(/(\d+[.,]\d{1,3})\s*$/);
+  if (qm) {
+    qtyRaw = qm[1];
+    s = s.slice(0, qm.index).trim();
+  } else {
+    // Trailing integer after whitespace (packing like 15Τ/Κ does not end the string)
+    qm = s.match(/\s(\d{1,4})\s*$/);
+    if (qm) {
+      qtyRaw = qm[1];
+      s = s.slice(0, qm.index).trim();
+    }
+  }
+
+  // Strip unit + storage location from description (no \\b — Greek-safe)
+  s = s.replace(/(?:^|\s)ΚΙΒΩΤ(?:ΙΑ)?(?=\s|$)/gi, ' ');
+  s = s.replace(/(?:^|\s)Μ\.?\s*Μ\.?(?=\s|$)/gi, ' ');
+  s = s.replace(/(?:^|\s)\d{3,5}(?:-\d{2,4})?\/[A-Za-zΑ-Ωα-ωΆ-ώ]{1,4}(?=\s|$)/g, ' ');
+  s = s.replace(/^[-–•·.,;:]+/, '').replace(/\s+/g, ' ').trim();
+
+  return { desc: s, qtyRaw };
+}
+
 function extractMetaFromSlipText(text) {
   let customer = '';
   let orderRef = '';
-  const raw = String(text || '');
+  const raw = normalizeSlipText(text);
 
-  const custRe = /ΕΠΩΝΥΜΙΑ[:\s]*([^\n\r]+)/i;
+  const custRe = /ΕΠΩΝΥΜΙΑ[:\s]*([^\n\r]+?)(?=\s*(?:ΑΦΜ|Α\.?Φ\.?Μ\.?|ΑΡΙΘΜΟΣ|ΗΜΕΡΟΜΗΝΙΑ|ΠΑΡΑΓΓΕΛΙΑ|ΚΩΔΙΚΟΣ|30-)|$)/i;
   const mCust = raw.match(custRe);
   if (mCust) {
     customer = mCust[1].replace(/ΑΦΜ.*$/i, '').replace(/\s{2,}/g, ' ').trim();
+  }
+  if (!customer) {
+    const mCh = raw.match(/\b(ΧΑΙΤΟΓΛΟΥ[^\n\r,]{0,60})/i);
+    if (mCh) customer = mCh[1].replace(/\s{2,}/g, ' ').trim();
   }
 
   const orderRes = [
     /ΑΡΙΘΜΟΣ\s*(?:ΠΑΡΑΓΓΕΛΙΑΣ)?[:\s#]*([0-9]{2,})/i,
     /ΠΑΡΑΓΓΕΛΙΑ[:\s#]*([0-9]{2,})/i,
+    /ΠΑΡΑΓΓΕΛΙΑ\s+[^\d\n]{0,30}?([0-9]{2,6})\b/i,
     /ORDER\s*(?:NO|REF|#)?[:\s]*([0-9]{2,})/i
   ];
   for (const re of orderRes) {
@@ -2840,46 +2893,70 @@ function extractMetaFromSlipText(text) {
 
 /**
  * Parse CamScanner / order-slip OCR text into a matrix compatible with extractLinesFromMatrix.
- * Rows: optional code 30-…, description, qty like 1.00 / 3.00 — product name = description.
+ * Splits on every product code 30-… (works even when OCR returns one long blob with en-dashes).
+ * Rows: code, description (product name), qty — prefer description over code for display.
  */
 function parseOrderSlipTextToMatrix(text) {
-  const { customer, orderRef } = extractMetaFromSlipText(text);
+  const normalized = normalizeSlipText(text);
+  const { customer, orderRef } = extractMetaFromSlipText(normalized);
   const matrix = [['ΚΩΔΙΚΟΣ', 'ΠΕΡΙΓΡΑΦΗ', 'ΠΟΣΟΤΗΤΑ', 'ΠΕΛΑΤΗΣ', 'ΠΑΡΑΓΓΕΛΙΑ']];
-  const lines = String(text || '').replace(/\r/g, '').split(/\n+/);
+
+  const codeRe = /30-\d{6,}/g;
+  const matches = Array.from(normalized.matchAll(codeRe));
+
+  if (matches.length) {
+    for (let i = 0; i < matches.length; i++) {
+      const code = matches[i][0];
+      const segStart = matches[i].index + code.length;
+      const segEnd = i + 1 < matches.length ? matches[i + 1].index : normalized.length;
+      const { desc, qtyRaw } = extractDescAndQtyFromSlipSegment(normalized.slice(segStart, segEnd));
+
+      if (!desc || desc.length < 3) continue;
+      if (isSlipHeaderOrTotalLine(desc)) continue;
+      if (/^(επωνυμια|αριθμος|ημερομηνια|σελίδα|σελιδα|παραγγελια)/i.test(normalizeImportHeader(desc))) continue;
+      if (!/[A-Za-zΑ-Ωα-ωΆ-ώ]/.test(desc)) continue;
+      if (!qtyRaw) continue;
+
+      matrix.push([code, desc, qtyRaw, customer, orderRef]);
+    }
+    return { matrix, customer, orderRef };
+  }
+
+  // Fallback only when no 30- codes: line-oriented parse (newline-separated slips)
+  const lines = normalized.split(/\n+/);
   const rowRe = /^(?:\s*(30-\d{6,})\s+)?(.+?)\s+(\d+(?:[.,]\d{1,3})?)\s*$/;
 
   for (const rawLine of lines) {
     let line = String(rawLine || '').replace(/\s+/g, ' ').trim();
     if (!line) continue;
     if (isSlipHeaderOrTotalLine(line)) continue;
-
-    // Drop leading junk bullets
     line = line.replace(/^[-–•·]+\s*/, '');
 
     const m = line.match(rowRe);
     if (!m) continue;
-    const code = (m[1] || '').trim();
+    let code = (m[1] || '').trim();
     let desc = (m[2] || '').trim();
     const qtyRaw = (m[3] || '').trim();
 
-    // Skip if description is clearly a label/meta
     if (isSlipHeaderOrTotalLine(desc)) continue;
     if (/^(επωνυμια|αριθμος|ημερομηνια|σελίδα|σελιδα)/i.test(normalizeImportHeader(desc))) continue;
 
-    // Prefer description; if OCR glued code into desc without capture, peel it
     if (!code) {
       const peel = desc.match(/^(30-\d{6,})\s+(.+)$/);
       if (peel) {
-        matrix.push([peel[1], peel[2].trim(), qtyRaw, customer, orderRef]);
-        continue;
+        code = peel[1];
+        desc = peel[2].trim();
       }
     }
 
-    // Description must look like a product (letters), not just a number
-    if (!/[A-Za-zΑ-Ωα-ωΆ-ώ]/.test(desc)) continue;
-    if (desc.length < 3) continue;
+    const cleaned = extractDescAndQtyFromSlipSegment(desc + (qtyRaw ? ' ' + qtyRaw : ''));
+    const finalDesc = cleaned.desc || desc;
+    const finalQty = cleaned.qtyRaw || qtyRaw;
+    if (!/[A-Za-zΑ-Ωα-ωΆ-ώ]/.test(finalDesc)) continue;
+    if (finalDesc.length < 3) continue;
+    if (!finalQty) continue;
 
-    matrix.push([code, desc, qtyRaw, customer, orderRef]);
+    matrix.push([code, finalDesc, finalQty, customer, orderRef]);
   }
 
   return { matrix, customer, orderRef };
@@ -2910,12 +2987,9 @@ async function matrixFromPdfFile(file, onStatus) {
 
   const parsed = parseOrderSlipTextToMatrix(text);
   if (!parsed.matrix || parsed.matrix.length <= 1) {
-    // Fallback: try treating OCR lines as CSV-ish single column dump
-    const loose = parseCsvText(text);
-    if (loose && loose.length) {
-      return { matrix: loose, customer: parsed.customer || '', orderRef: parsed.orderRef || '', rawText: text };
-    }
-    throw new Error('Δεν βρέθηκαν γραμμές προϊόντων στο PDF');
+    throw new Error(
+      'Δεν βρέθηκαν γραμμές προϊόντων στο PDF. Ελέγξτε την προεπισκόπηση του κειμένου ή δοκιμάστε εισαγωγή από Excel/CSV.'
+    );
   }
   return { matrix: parsed.matrix, customer: parsed.customer, orderRef: parsed.orderRef, rawText: text };
 }
