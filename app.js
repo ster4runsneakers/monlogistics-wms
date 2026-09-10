@@ -2475,19 +2475,25 @@ function createPickList() {
    Excel / CSV import → pick list
    -------------------------------------------------------------------------- */
 
-const IMPORT_PRODUCT_HEADERS = [
+// Description-like headers win over code-like when both are present (productIdx).
+const IMPORT_PRODUCT_DESC_HEADERS = [
   'προϊόν', 'προϊον', 'ειδος', 'είδος', 'περιγραφή', 'περιγραφη',
-  'description', 'product', 'item', 'name', 'όνομα', 'ονομα', 'κωδικός', 'κωδικος', 'code'
+  'description', 'product', 'item', 'name', 'όνομα', 'ονομα'
 ];
+// Code-only (incl. compound «κωδικός είδος» — must not beat περιγραφή for product name)
+const IMPORT_PRODUCT_CODE_HEADERS = [
+  'κωδικός είδος', 'κωδικος ειδος', 'κωδικός', 'κωδικος', 'code', 'sku', 'barcode'
+];
+const IMPORT_PRODUCT_HEADERS = IMPORT_PRODUCT_DESC_HEADERS.concat(IMPORT_PRODUCT_CODE_HEADERS);
 const IMPORT_QTY_HEADERS = [
   'ποσότητα', 'ποσοτητα', 'πος', 'ποσ', 'qty', 'quantity', 'τεμ', 'τμχ', 'pcs', 'ποσό', 'ποσο'
 ];
 const IMPORT_CUSTOMER_HEADERS = [
-  'πελάτης', 'πελατης', 'customer', 'client', 'πελάτη', 'πελατη'
+  'πελάτης', 'πελατης', 'customer', 'client', 'πελάτη', 'πελατη', 'επωνυμία', 'επωνυμια'
 ];
 const IMPORT_ORDER_HEADERS = [
   'παραγγελία', 'παραγγελια', 'order', 'αρ.παραγγελίας', 'αρ παραγγελίας', 'αρ. παραγγελίας',
-  'document', 'δοκ', 'doc', 'αρ.παραγγελιας', 'orderref', 'order ref', 'ref'
+  'document', 'δοκ', 'doc', 'αρ.παραγγελιας', 'orderref', 'order ref', 'ref', 'αριθμός', 'αριθμος'
 ];
 
 function normalizeImportHeader(h) {
@@ -2598,20 +2604,30 @@ function parseCsvText(text) {
 
 function mapImportColumns(headerRow) {
   const norms = headerRow.map(normalizeImportHeader);
-  let productIdx = -1;
+  let descIdx = -1;
+  let codeIdx = -1;
+  let productCodeIdx = -1;
   let qtyIdx = -1;
   let customerIdx = -1;
   let orderIdx = -1;
 
   norms.forEach((h, idx) => {
-    if (productIdx < 0 && headerMatches(h, IMPORT_PRODUCT_HEADERS)) productIdx = idx;
+    // Code headers first so «κωδικός είδος» is code-only (not είδος/description)
+    if (headerMatches(h, IMPORT_PRODUCT_CODE_HEADERS)) {
+      if (codeIdx < 0) codeIdx = idx;
+      if (productCodeIdx < 0) productCodeIdx = idx;
+    } else if (descIdx < 0 && headerMatches(h, IMPORT_PRODUCT_DESC_HEADERS)) {
+      descIdx = idx;
+    }
     if (qtyIdx < 0 && headerMatches(h, IMPORT_QTY_HEADERS)) qtyIdx = idx;
     if (customerIdx < 0 && headerMatches(h, IMPORT_CUSTOMER_HEADERS)) customerIdx = idx;
     if (orderIdx < 0 && headerMatches(h, IMPORT_ORDER_HEADERS)) orderIdx = idx;
   });
 
+  // Prefer description over code for product name column
+  const productIdx = descIdx >= 0 ? descIdx : codeIdx;
   const looksLikeHeader = productIdx >= 0 || qtyIdx >= 0 || customerIdx >= 0 || orderIdx >= 0;
-  return { productIdx, qtyIdx, customerIdx, orderIdx, looksLikeHeader, norms };
+  return { productIdx, qtyIdx, customerIdx, orderIdx, productCodeIdx, descIdx, codeIdx, looksLikeHeader, norms };
 }
 
 function extractLinesFromMatrix(matrix) {
@@ -2670,7 +2686,12 @@ function extractLinesFromMatrix(matrix) {
     if (!name && (row[qtyIdx] == null || String(row[qtyIdx]).trim() === '')) continue;
     if (!name) continue;
     if (!Number.isFinite(qty) || qty <= 0) continue;
-    lines.push({ productName: name, qtyNeeded: qty });
+    const line = { productName: name, qtyNeeded: qty };
+    if (headerMap.productCodeIdx >= 0 && headerMap.productCodeIdx !== productIdx) {
+      const code = String(row[headerMap.productCodeIdx] != null ? row[headerMap.productCodeIdx] : '').trim();
+      if (code) line.productCode = code;
+    }
+    lines.push(line);
 
     if (customerIdx >= 0 && !customer) {
       const c = String(row[customerIdx] != null ? row[customerIdx] : '').trim();
@@ -2705,6 +2726,198 @@ function matrixFromExcelArrayBuffer(buf) {
   const sheet = wb.Sheets[sheetName];
   const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
   return matrix;
+}
+
+/* --------------------------------------------------------------------------
+   PDF import (text layer + OCR for scans) → same matrix / preview flow
+   -------------------------------------------------------------------------- */
+
+const PDFJS_WORKER_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const PDF_TEXT_MIN_CHARS = 40;
+
+function ensurePdfJsReady() {
+  if (typeof pdfjsLib === 'undefined') {
+    throw new Error('Η βιβλιοθήκη pdf.js δεν φορτώθηκε');
+  }
+  if (pdfjsLib.GlobalWorkerOptions) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRC;
+  }
+  return pdfjsLib;
+}
+
+async function extractPdfTextLayer(arrayBuffer) {
+  const pdfjs = ensurePdfJsReady();
+  const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
+  const parts = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const line = (content.items || []).map((it) => (it && it.str != null ? String(it.str) : '')).join(' ');
+    if (line.trim()) parts.push(line);
+  }
+  return parts.join('\n').trim();
+}
+
+async function renderPdfPagesToCanvases(arrayBuffer, scale) {
+  const pdfjs = ensurePdfJsReady();
+  const loadingTask = pdfjs.getDocument({ data: arrayBuffer.slice(0) });
+  const pdf = await loadingTask.promise;
+  const canvases = [];
+  const s = scale || 2.2;
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const viewport = page.getViewport({ scale: s });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    canvases.push(canvas);
+  }
+  return canvases;
+}
+
+async function ocrCanvasesGreekEng(canvases, onStatus) {
+  if (typeof Tesseract === 'undefined') {
+    throw new Error('Η βιβλιοθήκη Tesseract.js δεν φορτώθηκε');
+  }
+  if (typeof onStatus === 'function') onStatus('Διαβάζω το PDF…');
+  const worker = await Tesseract.createWorker('ell+eng');
+  try {
+    const parts = [];
+    for (let i = 0; i < canvases.length; i++) {
+      if (typeof onStatus === 'function' && canvases.length > 1) {
+        onStatus(`Διαβάζω το PDF… (${i + 1}/${canvases.length})`);
+      }
+      const result = await worker.recognize(canvases[i]);
+      const t = result && result.data && result.data.text ? result.data.text : '';
+      if (t.trim()) parts.push(t);
+    }
+    return parts.join('\n').trim();
+  } finally {
+    try { await worker.terminate(); } catch (_) { /* ignore */ }
+  }
+}
+
+function isSlipHeaderOrTotalLine(line) {
+  const n = normalizeImportHeader(line);
+  if (!n) return true;
+  if (/σύνολο|συνολο|total|υποσυνολο|υποσύνολο/.test(n)) return true;
+  if (/κωδικος|κωδικός|περιγραφη|περιγραφή|ποσοτητα|ποσότητα|αποθηκευτικη|αποθηκευτική|θεση|θέση/.test(n)
+      && !/\d{2}-\d{5,}/.test(line) && !/\d+[.,]\d{2}/.test(line)) {
+    // header-ish without product codes / qty decimals
+    if (/κωδικος|περιγραφ|ποσοτ|ειδος|είδος|μ\.μ|μμ\b/.test(n)) return true;
+  }
+  return false;
+}
+
+function extractMetaFromSlipText(text) {
+  let customer = '';
+  let orderRef = '';
+  const raw = String(text || '');
+
+  const custRe = /ΕΠΩΝΥΜΙΑ[:\s]*([^\n\r]+)/i;
+  const mCust = raw.match(custRe);
+  if (mCust) {
+    customer = mCust[1].replace(/ΑΦΜ.*$/i, '').replace(/\s{2,}/g, ' ').trim();
+  }
+
+  const orderRes = [
+    /ΑΡΙΘΜΟΣ\s*(?:ΠΑΡΑΓΓΕΛΙΑΣ)?[:\s#]*([0-9]{2,})/i,
+    /ΠΑΡΑΓΓΕΛΙΑ[:\s#]*([0-9]{2,})/i,
+    /ORDER\s*(?:NO|REF|#)?[:\s]*([0-9]{2,})/i
+  ];
+  for (const re of orderRes) {
+    const m = raw.match(re);
+    if (m) {
+      orderRef = m[1].trim();
+      break;
+    }
+  }
+  return { customer, orderRef };
+}
+
+/**
+ * Parse CamScanner / order-slip OCR text into a matrix compatible with extractLinesFromMatrix.
+ * Rows: optional code 30-…, description, qty like 1.00 / 3.00 — product name = description.
+ */
+function parseOrderSlipTextToMatrix(text) {
+  const { customer, orderRef } = extractMetaFromSlipText(text);
+  const matrix = [['ΚΩΔΙΚΟΣ', 'ΠΕΡΙΓΡΑΦΗ', 'ΠΟΣΟΤΗΤΑ', 'ΠΕΛΑΤΗΣ', 'ΠΑΡΑΓΓΕΛΙΑ']];
+  const lines = String(text || '').replace(/\r/g, '').split(/\n+/);
+  const rowRe = /^(?:\s*(30-\d{6,})\s+)?(.+?)\s+(\d+(?:[.,]\d{1,3})?)\s*$/;
+
+  for (const rawLine of lines) {
+    let line = String(rawLine || '').replace(/\s+/g, ' ').trim();
+    if (!line) continue;
+    if (isSlipHeaderOrTotalLine(line)) continue;
+
+    // Drop leading junk bullets
+    line = line.replace(/^[-–•·]+\s*/, '');
+
+    const m = line.match(rowRe);
+    if (!m) continue;
+    const code = (m[1] || '').trim();
+    let desc = (m[2] || '').trim();
+    const qtyRaw = (m[3] || '').trim();
+
+    // Skip if description is clearly a label/meta
+    if (isSlipHeaderOrTotalLine(desc)) continue;
+    if (/^(επωνυμια|αριθμος|ημερομηνια|σελίδα|σελιδα)/i.test(normalizeImportHeader(desc))) continue;
+
+    // Prefer description; if OCR glued code into desc without capture, peel it
+    if (!code) {
+      const peel = desc.match(/^(30-\d{6,})\s+(.+)$/);
+      if (peel) {
+        matrix.push([peel[1], peel[2].trim(), qtyRaw, customer, orderRef]);
+        continue;
+      }
+    }
+
+    // Description must look like a product (letters), not just a number
+    if (!/[A-Za-zΑ-Ωα-ωΆ-ώ]/.test(desc)) continue;
+    if (desc.length < 3) continue;
+
+    matrix.push([code, desc, qtyRaw, customer, orderRef]);
+  }
+
+  return { matrix, customer, orderRef };
+}
+
+async function matrixFromPdfFile(file, onStatus) {
+  const buf = await file.arrayBuffer();
+  // pdf.js may transfer/detach the ArrayBuffer — keep a copy for OCR fallback
+  const bufForOcr = buf.slice(0);
+  let text = '';
+  try {
+    text = await extractPdfTextLayer(buf);
+  } catch (err) {
+    console.warn('PDF text layer failed, will try OCR:', err);
+    text = '';
+  }
+
+  if (!text || text.replace(/\s/g, '').length < PDF_TEXT_MIN_CHARS) {
+    if (typeof onStatus === 'function') onStatus('Διαβάζω το PDF…');
+    showToast('Διαβάζω το PDF…', 'success');
+    const canvases = await renderPdfPagesToCanvases(bufForOcr, 2.2);
+    text = await ocrCanvasesGreekEng(canvases, onStatus);
+  }
+
+  if (!text || !text.trim()) {
+    throw new Error('Δεν διαβάστηκε κείμενο από το PDF');
+  }
+
+  const parsed = parseOrderSlipTextToMatrix(text);
+  if (!parsed.matrix || parsed.matrix.length <= 1) {
+    // Fallback: try treating OCR lines as CSV-ish single column dump
+    const loose = parseCsvText(text);
+    if (loose && loose.length) {
+      return { matrix: loose, customer: parsed.customer || '', orderRef: parsed.orderRef || '', rawText: text };
+    }
+    throw new Error('Δεν βρέθηκαν γραμμές προϊόντων στο PDF');
+  }
+  return { matrix: parsed.matrix, customer: parsed.customer, orderRef: parsed.orderRef, rawText: text };
 }
 
 function clearPickImport(opts) {
@@ -2797,18 +3010,26 @@ async function onPickImportFileChange(ev) {
   const name = (file.name || '').toLowerCase();
   const isCsv = name.endsWith('.csv') || (file.type && file.type.indexOf('csv') >= 0);
   const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
+  const isPdf = name.endsWith('.pdf') || (file.type && file.type.indexOf('pdf') >= 0);
 
-  if (!isCsv && !isExcel) {
-    showToast('Μη υποστηριζόμενος τύπος αρχείου. Χρησιμοποιήστε .xlsx, .xls ή .csv', 'error');
+  if (!isCsv && !isExcel && !isPdf) {
+    showToast('Μη υποστηριζόμενος τύπος αρχείου. Χρησιμοποιήστε .xlsx, .xls, .csv ή .pdf', 'error');
     clearPickImport();
     return;
   }
 
   try {
     let matrix;
+    let pdfMeta = { customer: '', orderRef: '' };
     if (isCsv) {
       const text = await file.text();
       matrix = parseCsvText(text);
+    } else if (isPdf) {
+      const pdfResult = await matrixFromPdfFile(file, (msg) => {
+        /* status toast already shown once for OCR */
+      });
+      matrix = pdfResult.matrix;
+      pdfMeta = { customer: pdfResult.customer || '', orderRef: pdfResult.orderRef || '' };
     } else {
       const buf = await file.arrayBuffer();
       matrix = matrixFromExcelArrayBuffer(buf);
@@ -2823,11 +3044,12 @@ async function onPickImportFileChange(ev) {
 
     pickImportLines = result.lines.map((ln) => ({
       productName: ln.productName,
-      qtyNeeded: ln.qtyNeeded
+      qtyNeeded: ln.qtyNeeded,
+      productCode: ln.productCode || ''
     }));
     pickImportMeta = {
-      customer: result.customer || '',
-      orderRef: result.orderRef || ''
+      customer: result.customer || pdfMeta.customer || '',
+      orderRef: result.orderRef || pdfMeta.orderRef || ''
     };
     renderPickImportPreview();
     showToast(`Διαβάστηκαν ${pickImportLines.length} γραμμές από το αρχείο`, 'success');

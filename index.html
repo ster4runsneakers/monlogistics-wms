@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=prod1">
+  <link rel="stylesheet" href="styles.css?v=pdf2">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -524,17 +524,17 @@
           </div>
         </div>
 
-        <!-- Import from Excel / CSV -->
+        <!-- Import from Excel / CSV / PDF -->
         <div class="glass-card pick-import-card">
           <h2 class="card-title">
             <i data-lucide="file-spreadsheet" style="color: var(--emerald);"></i>
-            Εισαγωγή από Excel / CSV
+            Εισαγωγή από Excel / CSV / PDF
           </h2>
-          <p class="card-desc">Ανεβάστε λίστα από λογιστήριο (.xlsx, .xls, .csv) — προεπισκόπηση και δημιουργία λίστας picking χωρίς χειροκίνητη πληκτρολόγηση.</p>
+          <p class="card-desc">Ανεβάστε λίστα από λογιστήριο (.xlsx, .xls, .csv, .pdf) — προεπισκόπηση και δημιουργία λίστας picking χωρίς χειροκίνητη πληκτρολόγηση. Τα σαρωμένα PDF διαβάζονται με OCR.</p>
 
           <div class="form-group">
             <label class="form-label" for="pickImportFile">Αρχείο *</label>
-            <input type="file" id="pickImportFile" class="form-input" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+            <input type="file" id="pickImportFile" class="form-input" accept=".xlsx,.xls,.csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,*/*">
           </div>
 
           <div id="pickImportMeta" class="pick-import-meta" hidden>
@@ -677,7 +677,10 @@
   <script src="firebase-config.js?v=fb1"></script>
   <!-- SheetJS (Excel .xlsx/.xls) — must load before app.js -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <!-- cache-bust: prod1 -->
-  <script src="app.js?v=prod1"></script>
+  <!-- pdf.js 3.11.174 (UMD) + tesseract.js 5.1.1 — PDF text / OCR import -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <!-- cache-bust: pdf2 -->
+  <script src="app.js?v=pdf2"></script>
 </body>
 </html>
