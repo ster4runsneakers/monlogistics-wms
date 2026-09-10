@@ -35,7 +35,8 @@ let pickImportMeta = { customer: '', orderRef: '' };
 let activePickListId = null;
 let firestorePickUnsub = null;
 let applyingPickRemoteSnapshot = false;
-let pendingPickContext = null; // { listId, lineId, palletId, available, expiry }
+let pendingPickContext = null; // { listId, lineId, palletId, available, expiry, mode }
+let pickScanAwaiting = null; // { listId, lineId } — intercept next pallet QR for picking
 let pickModalDelegatedBound = false;
 
 // Firebase / sync state
@@ -886,6 +887,9 @@ function resetLinkSteps() {
   scanAisleRow = null;
   scanBaseShelf = null;
   // keep scanLocationType so operator can continue same mode
+  if (pickScanAwaiting) {
+    cancelPickPalletScan();
+  }
   const sel = document.getElementById('simPalletSelect');
   if (sel) sel.value = '';
   updateLinkUI();
@@ -1278,6 +1282,32 @@ function loadImageForDecode(file) {
 
 function onQrScanned(text) {
   console.log('Decoded QR Text:', text);
+
+  // Picking scan mode: only accept pallet QR / id
+  if (pickScanAwaiting) {
+    try {
+      const json = JSON.parse(text);
+      if (json.type === 'PALLET' && json.id) {
+        handlePickPalletScan(String(json.id));
+        return;
+      }
+      if (json.type === 'SHELF' || json.type === 'AISLE') {
+        showToast('Σκανάρετε παλέτα (όχι ράφι/διάδρομο)', 'error');
+        return;
+      }
+    } catch (e) {
+      // plain text
+    }
+    if (String(text).startsWith('SHELF:') || String(text).startsWith('AISLE:')) {
+      showToast('Σκανάρετε παλέτα (όχι ράφι/διάδρομο)', 'error');
+      return;
+    }
+    const palletId = String(text).startsWith('PALLET:')
+      ? String(text).replace('PALLET:', '').trim()
+      : String(text).trim();
+    handlePickPalletScan(palletId);
+    return;
+  }
   
   // Try parsing JSON if structured
   try {
@@ -1328,22 +1358,28 @@ function onQrScanned(text) {
    TAB 3a: PRODUCT ACROSS-PALLETS SEARCH
    ========================================================================== */
 
-/** Fold Greek/Latin text for search: lowercase + strip diacritics (φέτα ≈ φετα). */
+/** Fold Greek/Latin text for search: lowercase, strip diacritics, Greek→Latin (ΤΑΧΙΝΙ ≈ TAXINI). */
 function foldSearchText(s) {
+  const gr2lat = {
+    'α': 'a', 'β': 'v', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'i', 'θ': 'th',
+    'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 'ν': 'n', 'ξ': 'x', 'ο': 'o', 'π': 'p',
+    'ρ': 'r', 'σ': 's', 'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'f', 'χ': 'x', 'ψ': 'ps', 'ω': 'o'
+  };
   return String(s || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/ς/g, 'σ')
+    .replace(/[α-ω]/g, (ch) => gr2lat[ch] || ch)
     .trim();
 }
 
-/** Partial, case-insensitive match of query against item name */
+/** Partial / token match of query against item name (shared with picking). */
 function productNamePartialMatch(itemName, query) {
   const a = foldSearchText(itemName);
   const q = foldSearchText(query);
   if (!a || !q) return false;
-  return a.includes(q);
+  if (a.includes(q) || q.includes(a)) return true;
+  return itemNameMatchInfo(itemName, query).matches;
 }
 
 function locationSortKey(p) {
@@ -1998,11 +2034,80 @@ function generatePickLineId() {
   return `ln-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`;
 }
 
+/** Noise tokens from order slips (ΚΙΒΩΤ, Τ/Κ, ΧΓΛ, …) — ignored for matching. */
+const PRODUCT_NAME_NOISE = new Set([
+  // After foldSearchText (Greek→Latin): ΚΙΒΩΤ→kivot, ΧΓΛ→xgl, Τ/Κ stripped earlier
+  'kivot', 'kivotio', 'kibot',
+  'tk', 'tem', 'temax', 'temaxia',
+  'xgl', 'xondr', 'xondriki'
+]);
+
+/** Fold + strip common slip noise before tokenization. */
+function prepareProductMatchText(s) {
+  let f = foldSearchText(s);
+  // Noise after Latin fold: 15Τ/Κ, Τ/Κ, ΚΙΒΩΤ…, ΧΓΛ
+  f = f.replace(/\d+\s*t\s*\/\s*k\b/g, ' ');
+  f = f.replace(/\bt\s*\/\s*k\b/g, ' ');
+  f = f.replace(/\bkivot\w*/g, ' ');
+  f = f.replace(/\bxgl\.?\b/g, ' ');
+  return f.replace(/\s+/g, ' ').trim();
+}
+
+/** Significant tokens: length ≥ 3, skip numbers-only and noise. Keep weight/size like 350γ. */
+function significantProductTokens(folded) {
+  const parts = String(folded || '').split(/[^a-z0-9]+/i).filter(Boolean);
+  const out = [];
+  for (const t of parts) {
+    if (t.length < 3) continue;
+    if (/^\d+$/.test(t)) continue;
+    if (/^\d+t$/.test(t)) continue; // pack counts like 15t from 15Τ/Κ
+    if (PRODUCT_NAME_NOISE.has(t)) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Score name similarity for picking / search.
+ * tier 3 exact, 2 contains (either way), 1 token-overlap (most tokens), 0 no match.
+ * Low-confidence does not auto-pick — callers only preselect when scan resolves a real pallet.
+ */
+function itemNameMatchInfo(itemName, productName) {
+  const a = prepareProductMatchText(itemName);
+  const b = prepareProductMatchText(productName);
+  if (!a || !b) return { matches: false, score: 0, tier: 0 };
+
+  if (a === b) return { matches: true, score: 100, tier: 3 };
+  if (a.includes(b) || b.includes(a)) {
+    const shorter = Math.min(a.length, b.length);
+    const longer = Math.max(a.length, b.length);
+    const score = 70 + Math.round(20 * (shorter / longer));
+    return { matches: true, score, tier: 2 };
+  }
+
+  const ta = significantProductTokens(a);
+  const tb = significantProductTokens(b);
+  if (!ta.length || !tb.length) return { matches: false, score: 0, tier: 0 };
+
+  // Require most tokens from the smaller set to appear in the other string
+  const useA = ta.length <= tb.length;
+  const needles = useA ? ta : tb;
+  const hayStack = useA ? b : a;
+  const hayTokens = useA ? tb : ta;
+  let hit = 0;
+  for (const tok of needles) {
+    const found = hayStack.includes(tok) || hayTokens.some((ht) => ht.includes(tok) || tok.includes(ht));
+    if (found) hit += 1;
+  }
+  const need = Math.floor(needles.length / 2) + 1; // most (>50%)
+  if (hit < need) return { matches: false, score: hit, tier: 0 };
+
+  const score = 35 + Math.round(40 * (hit / needles.length));
+  return { matches: true, score, tier: 1 };
+}
+
 function itemNameMatches(itemName, productName) {
-  const a = String(itemName || '').trim().toLowerCase();
-  const b = String(productName || '').trim().toLowerCase();
-  if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+  return itemNameMatchInfo(itemName, productName).matches;
 }
 
 function locationTypeLabel(type) {
@@ -2200,7 +2305,8 @@ function findPickCandidates(productName, qtyRemaining) {
     if (!isInStock(pallet)) return;
     const items = Array.isArray(pallet.items) ? pallet.items : [];
     items.forEach((item, itemIndex) => {
-      if (!itemNameMatches(item && item.name, name)) return;
+      const info = itemNameMatchInfo(item && item.name, name);
+      if (!info.matches) return;
       if (item.qty == null || item.qty === '') return; // MVP: require numeric qty
       const available = Number(item.qty);
       if (!Number.isFinite(available) || available <= 0) return;
@@ -2212,12 +2318,17 @@ function findPickCandidates(productName, qtyRemaining) {
         available,
         expiry: item.expiry || null,
         locationCode: pallet.shelf || null,
-        locationType
+        locationType,
+        matchTier: info.tier,
+        matchScore: info.score
       });
     });
   });
 
   candidates.sort((a, b) => {
+    // Stronger name match first (exact/contains before weak token overlap)
+    if (b.matchTier !== a.matchTier) return b.matchTier - a.matchTier;
+    if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
     if (a.expiry && b.expiry) {
       if (a.expiry < b.expiry) return -1;
       if (a.expiry > b.expiry) return 1;
@@ -3264,6 +3375,8 @@ function renderPickDetail() {
     card.hidden = true;
     linesEl.innerHTML = '';
     if (footer) footer.innerHTML = '';
+    const printBtnHide = document.getElementById('btnPrintPickList');
+    if (printBtnHide) printBtnHide.hidden = true;
     return;
   }
 
@@ -3279,6 +3392,8 @@ function renderPickDetail() {
   if (meta) {
     meta.innerHTML = `${escapeHtml(pl.id)} · <span class="pick-status pick-status-${escapeHtml(pl.status)}">${escapeHtml(pickStatusLabel(pl.status))}</span>`;
   }
+  const printBtn = document.getElementById('btnPrintPickList');
+  if (printBtn) printBtn.hidden = false;
 
   const canPick = pl.status === 'open' || pl.status === 'in_progress';
 
@@ -3348,9 +3463,9 @@ function renderPickDetail() {
           </div>
         </div>
         ${canPick && remaining > 0 ? `
-          <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:0.5rem;"
+          <button type="button" class="btn btn-primary pick-scan-btn"
             data-pick-scan="${escapeHtml(pl.id)}" data-line-id="${escapeHtml(ln.id)}">
-            <i data-lucide="scan-line" style="width: 14px;"></i>
+            <i data-lucide="scan-line" style="width: 18px;"></i>
             Σκανάρισμα παλέτας
           </button>
         ` : ''}
@@ -3375,14 +3490,10 @@ function renderPickDetail() {
 
   linesEl.querySelectorAll('[data-pick-scan]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      openPickModal({
-        listId: btn.getAttribute('data-pick-scan'),
-        lineId: btn.getAttribute('data-line-id'),
-        palletId: null,
-        available: null,
-        expiry: null,
-        mode: 'scan'
-      });
+      startPickPalletScan(
+        btn.getAttribute('data-pick-scan'),
+        btn.getAttribute('data-line-id')
+      );
     });
   });
 
@@ -3407,6 +3518,236 @@ function renderPickDetail() {
     const cancelBtn = footer.querySelector('[data-pick-cancel]');
     if (cancelBtn) cancelBtn.addEventListener('click', () => cancelPickList(cancelBtn.getAttribute('data-pick-cancel')));
   }
+}
+
+
+function cancelPickPalletScan() {
+  pickScanAwaiting = null;
+  const banner = document.getElementById('pickScanBanner');
+  if (banner) banner.hidden = true;
+}
+
+/**
+ * Start camera/QR flow for picking a line. Reuses tab-link scanner (PALLET:id).
+ */
+function startPickPalletScan(listId, lineId) {
+  const pl = pickLists.find((x) => x.id === listId);
+  if (!pl) {
+    showToast('Η λίστα picking δεν βρέθηκε', 'error');
+    return;
+  }
+  const line = (pl.lines || []).find((ln) => ln.id === lineId);
+  if (!line) {
+    showToast('Η γραμμή δεν βρέθηκε', 'error');
+    return;
+  }
+  const remaining = Math.max(0, Number(line.qtyNeeded) - Number(line.qtyPicked));
+  if (remaining <= 0) {
+    showToast('Η γραμμή έχει ήδη ολοκληρωθεί', 'error');
+    return;
+  }
+
+  // Close confirm modal if open (does not clear pickScanAwaiting)
+  const modal = document.getElementById('pickModal');
+  if (modal && !modal.hidden) {
+    pendingPickContext = null;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  pickScanAwaiting = { listId: String(listId), lineId: String(lineId) };
+  switchTab('tab-link');
+  updatePickScanBanner();
+  showToast('Σκανάρετε το QR της παλέτας (PALLET:…)', 'success');
+  startCameraScanner().catch(() => {});
+}
+
+function updatePickScanBanner() {
+  let banner = document.getElementById('pickScanBanner');
+  if (!pickScanAwaiting) {
+    if (banner) banner.hidden = true;
+    return;
+  }
+  if (!banner) {
+    const flow = document.querySelector('#tab-link .scanner-flow');
+    if (!flow) return;
+    banner = document.createElement('div');
+    banner.id = 'pickScanBanner';
+    banner.className = 'pick-scan-banner';
+    flow.insertBefore(banner, flow.firstChild);
+  }
+  const pl = pickLists.find((x) => x.id === pickScanAwaiting.listId);
+  const line = pl && (pl.lines || []).find((ln) => ln.id === pickScanAwaiting.lineId);
+  const name = line ? line.productName : '';
+  banner.hidden = false;
+  banner.innerHTML = `
+    <div class="pick-scan-banner-text">
+      <strong>Picking — σκανάρισμα παλέτας</strong>
+      <span>${escapeHtml(name)}</span>
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm" id="btnCancelPickScan">Ακύρωση</button>
+  `;
+  const btn = document.getElementById('btnCancelPickScan');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      cancelPickPalletScan();
+      stopCameraScanner();
+      switchTab('tab-picking');
+      showToast('Ακυρώθηκε το σκανάρισμα', 'success');
+    });
+  }
+}
+
+/**
+ * After QR decode during pick-scan: validate pallet vs active line, open confirm modal.
+ * @returns {boolean} true if the scan was consumed by picking (even on error)
+ */
+function handlePickPalletScan(palletId) {
+  if (!pickScanAwaiting) return false;
+  const ctx = pickScanAwaiting;
+  const id = String(palletId || '').trim();
+  if (!id) return false;
+
+  const pl = pickLists.find((x) => x.id === ctx.listId);
+  const line = pl && (pl.lines || []).find((ln) => ln.id === ctx.lineId);
+  if (!pl || !line) {
+    pickScanAwaiting = null;
+    updatePickScanBanner();
+    showToast('Η γραμμή picking δεν βρέθηκε', 'error');
+    switchTab('tab-picking');
+    return true;
+  }
+
+  const pallet = pallets.find((p) => p.id === id);
+  if (!pallet) {
+    showToast('Η παλέτα δεν βρέθηκε', 'error');
+    return true; // keep awaiting for retry
+  }
+
+  const remaining = Math.max(0, Number(line.qtyNeeded) - Number(line.qtyPicked));
+  const candidates = findPickCandidates(line.productName, remaining);
+  const asCand = candidates.find((c) => c.pallet.id === id);
+
+  let available = null;
+  let expiry = null;
+
+  if (asCand) {
+    available = asCand.available;
+    expiry = asCand.expiry || null;
+  } else {
+    const items = Array.isArray(pallet.items) ? pallet.items : [];
+    let matched = null;
+    for (let i = 0; i < items.length; i++) {
+      if (!itemNameMatches(items[i] && items[i].name, line.productName)) continue;
+      matched = items[i];
+      break;
+    }
+    if (!matched) {
+      showToast('Η παλέτα δεν έχει αυτό το προϊόν', 'error');
+      return true; // keep awaiting
+    }
+    if (!isInStock(pallet)) {
+      showToast('χωρίς απόθεμα', 'error');
+      return true;
+    }
+    const avail = matched.qty == null || matched.qty === '' ? NaN : Number(matched.qty);
+    if (!Number.isFinite(avail) || avail <= 0) {
+      showToast('χωρίς απόθεμα', 'error');
+      return true;
+    }
+    available = avail;
+    expiry = matched.expiry || null;
+  }
+
+  pickScanAwaiting = null;
+  updatePickScanBanner();
+  stopCameraScanner().catch(() => {});
+  switchTab('tab-picking');
+  openPickModal({
+    listId: ctx.listId,
+    lineId: ctx.lineId,
+    palletId: id,
+    available,
+    expiry,
+    mode: 'direct'
+  });
+  showToast(`Επιλέχθηκε παλέτα ${id}`, 'success');
+  return true;
+}
+
+function printActivePickList() {
+  if (!activePickListId) {
+    showToast('Ανοίξτε μια λίστα πρώτα', 'error');
+    return;
+  }
+  printPickList(activePickListId);
+}
+
+function printPickList(listId) {
+  const pl = pickLists.find((x) => x.id === listId);
+  if (!pl) {
+    showToast('Η λίστα δεν βρέθηκε', 'error');
+    return;
+  }
+  const created = pl.createdAt ? new Date(pl.createdAt) : new Date();
+  const dateStr = created.toLocaleString('el-GR');
+  const rows = (pl.lines || []).map((ln) => {
+    const remaining = Math.max(0, Number(ln.qtyNeeded) - Number(ln.qtyPicked));
+    const canSuggest = remaining > 0 && (pl.status === 'open' || pl.status === 'in_progress');
+    const top = canSuggest ? (findPickCandidates(ln.productName, remaining)[0] || null) : null;
+    let sug = '—';
+    if (top && top.locationCode) {
+      sug = `${locationTypeLabel(top.locationType)}: ${top.locationCode}`;
+    } else if (top) {
+      sug = 'Χωρίς θέση';
+    }
+    return `<tr>
+      <td>${escapeHtml(ln.productName)}</td>
+      <td class="num">${escapeHtml(String(ln.qtyNeeded))}</td>
+      <td class="num">${escapeHtml(String(ln.qtyPicked))}</td>
+      <td>${escapeHtml(pickStatusLabel(ln.status))}</td>
+      <td>${escapeHtml(sug)}</td>
+    </tr>`;
+  }).join('');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'print-pick-list';
+  wrap.innerHTML = `
+    <h1>Λίστα picking</h1>
+    <div class="print-pick-meta">
+      <div><strong>Πελάτης:</strong> ${escapeHtml(pl.customer)}</div>
+      <div><strong>Παραγγελία:</strong> ${escapeHtml(pl.orderRef)}</div>
+      <div><strong>Κωδ. λίστας:</strong> ${escapeHtml(pl.id)}</div>
+      <div><strong>Ημ/νία:</strong> ${escapeHtml(dateStr)}</div>
+      <div><strong>Κατάσταση:</strong> ${escapeHtml(pickStatusLabel(pl.status))}</div>
+    </div>
+    <table class="print-pick-table">
+      <thead>
+        <tr>
+          <th>Προϊόν</th>
+          <th>Χρειάζεται</th>
+          <th>Picked</th>
+          <th>Κατάσταση</th>
+          <th>Προτ. θέση</th>
+        </tr>
+      </thead>
+      <tbody>${rows || '<tr><td colspan="5">Χωρίς γραμμές</td></tr>'}</tbody>
+    </table>
+  `;
+
+  const printArea = document.getElementById('printArea');
+  if (!printArea) {
+    showToast('Σφάλμα περιοχής εκτύπωσης', 'error');
+    return;
+  }
+  printArea.innerHTML = '';
+  printArea.appendChild(wrap);
+  printArea.style.display = 'block';
+  window.print();
+  setTimeout(() => {
+    printArea.style.display = 'none';
+    printArea.innerHTML = '';
+  }, 1000);
 }
 
 function openPickModal(ctx) {
@@ -3494,6 +3835,34 @@ function openPickModal(ctx) {
     qtyInput.value = pendingPickContext.palletId ? String(maxQ) : '';
     qtyInput.max = String(remaining);
     qtyInput.min = '0.01';
+  }
+
+  // Scan CTA inside confirm modal (fallback to camera flow)
+  let scanWrap = document.getElementById('pickModalScanWrap');
+  if (!scanWrap) {
+    const panel = modal && modal.querySelector('.modal-panel');
+    const qtyGroup = document.getElementById('pickModalQtyGroup');
+    if (panel && qtyGroup) {
+      scanWrap = document.createElement('div');
+      scanWrap.id = 'pickModalScanWrap';
+      scanWrap.className = 'pick-modal-scan-wrap';
+      qtyGroup.parentNode.insertBefore(scanWrap, qtyGroup);
+    }
+  }
+  if (scanWrap) {
+    scanWrap.innerHTML = `
+      <button type="button" class="btn btn-primary pick-scan-btn" id="pickModalScanBtn">
+        <i data-lucide="scan-line" style="width: 18px;"></i>
+        Σκανάρισμα παλέτας
+      </button>
+      <p class="pick-empty" style="margin:0.35rem 0 0;">ή επιλέξτε παλέτα χειροκίνητα παραπάνω</p>
+    `;
+    const scanBtn = document.getElementById('pickModalScanBtn');
+    if (scanBtn) {
+      scanBtn.addEventListener('click', () => {
+        startPickPalletScan(pendingPickContext.listId, pendingPickContext.lineId);
+      });
+    }
   }
 
   if (modal) {

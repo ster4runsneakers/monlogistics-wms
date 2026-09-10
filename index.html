@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=pdf3">
+  <link rel="stylesheet" href="styles.css?v=pick4">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -595,10 +595,16 @@
               <i data-lucide="package-open" style="color: var(--amber);"></i>
               <span id="pickDetailTitle">Λεπτομέρεια λίστας</span>
             </h2>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="closePickDetail()">
-              <i data-lucide="x" style="width: 14px;"></i>
-              Κλείσιμο
-            </button>
+            <div class="pick-detail-header-actions">
+              <button type="button" class="btn btn-secondary btn-sm" id="btnPrintPickList" onclick="printActivePickList()" hidden>
+                <i data-lucide="printer" style="width: 14px;"></i>
+                Εκτύπωση λίστας
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="closePickDetail()">
+                <i data-lucide="x" style="width: 14px;"></i>
+                Κλείσιμο
+              </button>
+            </div>
           </div>
           <p class="card-desc" id="pickDetailMeta" style="margin-top: 0.75rem;"></p>
           <div id="pickDetailLines" class="pick-detail-lines"></div>
@@ -680,7 +686,7 @@
   <!-- pdf.js 3.11.174 (UMD) + tesseract.js 5.1.1 — PDF text / OCR import -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <!-- cache-bust: pdf3 -->
-  <script src="app.js?v=pdf3"></script>
+  <!-- cache-bust: pick4 -->
+  <script src="app.js?v=pick4"></script>
 </body>
 </html>

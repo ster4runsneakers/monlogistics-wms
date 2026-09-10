@@ -1389,6 +1389,57 @@ body {
     width: 100%;
     visibility: visible;
   }
+
+  #printArea .print-pick-list {
+    width: 100% !important;
+    max-width: 100% !important;
+    color: #000 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    align-self: flex-start;
+  }
+  #printArea .print-pick-list h1 {
+    font-size: 1.35rem;
+    margin: 0 0 0.75rem;
+    color: #000 !important;
+  }
+  #printArea .print-pick-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    color: #000 !important;
+  }
+  #printArea .print-pick-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    color: #000 !important;
+  }
+  #printArea .print-pick-table th,
+  #printArea .print-pick-table td {
+    border: 1px solid #333;
+    padding: 0.4rem 0.5rem;
+    text-align: left;
+    vertical-align: top;
+    color: #000 !important;
+  }
+  #printArea .print-pick-table th {
+    background: #eee !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #printArea .print-pick-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  #printArea {
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+  }
 }
 
 
@@ -1934,3 +1985,101 @@ body {
     padding: 0.85rem 0.95rem;
   }
 }
+
+.pick-detail-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pick-scan-btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 48px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin-bottom: 0.55rem;
+  gap: 0.5rem;
+}
+
+.pick-modal-scan-wrap {
+  margin: 0.35rem 0 0.85rem;
+}
+
+.pick-scan-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 0.75rem;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+}
+
+.pick-scan-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.pick-scan-banner-text strong {
+  color: #fbbf24;
+}
+
+.pick-scan-banner-text span {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+/* Screen preview of pick print (hidden until printArea shown) */
+.print-pick-list {
+  width: 100%;
+  max-width: 720px;
+  color: #0f172a;
+  background: #fff;
+  padding: 1.25rem;
+  border-radius: 8px;
+}
+.print-pick-list h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.35rem;
+}
+.print-pick-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+.print-pick-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.print-pick-table th,
+.print-pick-table td {
+  border: 1px solid #64748b;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.print-pick-table th {
+  background: #e2e8f0;
+}
+.print-pick-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .print-pick-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
