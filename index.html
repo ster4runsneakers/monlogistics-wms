@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=pick4">
+  <link rel="stylesheet" href="styles.css?v=set1">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -64,6 +64,11 @@
           <i data-lucide="clipboard-list" style="width: 18px;"></i>
           <span class="nav-label-full">5. Picking</span>
           <span class="nav-label-short">5. Pick</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-settings')">
+          <i data-lucide="settings" style="width: 18px;"></i>
+          <span class="nav-label-full">6. Ρυθμίσεις</span>
+          <span class="nav-label-short">6. Ρυθμ.</span>
         </button>
       </nav>
 
@@ -295,6 +300,11 @@
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Β-08')">📍 Β-08</button>
                   <button type="button" class="btn btn-secondary btn-sm" onclick="simulateShelfScan('Γ-01')">📍 Γ-01</button>
                 </div>
+                <div class="manual-loc-row">
+                  <input type="text" id="manualLocationInput" class="form-input" list="locationCodesList" placeholder="Γράψε / διάλεξε θέση π.χ. Β-07-2" autocomplete="off">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="applyManualLocation()">OK</button>
+                </div>
+                <datalist id="locationCodesList"></datalist>
               </div>
 
               <div id="aisleRowPicker" class="aisle-row-picker" hidden>
@@ -457,7 +467,8 @@
         <div style="display: flex; gap: 1rem; margin-bottom: 2rem; align-items: flex-end; flex-wrap: wrap;">
           <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
             <label class="form-label">Ζώνη (Zone)</label>
-            <input type="text" id="shelfZoneInput" class="form-input" value="Α">
+            <input type="text" id="shelfZoneInput" class="form-input" value="Α" list="zoneLettersList">
+            <datalist id="zoneLettersList"></datalist>
           </div>
           <div class="form-group" style="margin-bottom: 0; min-width: 140px;">
             <label class="form-label">Από Θέση</label>
@@ -488,6 +499,109 @@
       </div>
     </section>
 
+
+    <!-- TAB 6: SETTINGS -->
+    <section id="tab-settings" class="tab-content">
+      <div class="glass-card settings-card">
+        <h2 class="card-title"><i data-lucide="settings" style="color: var(--primary);"></i> Ρυθμίσεις</h2>
+        <p class="card-desc">Οι ρυθμίσεις αποθηκεύονται στο cloud και ισχύουν για όλα τα κινητά. <span id="settingsSyncNote" class="settings-sync-note"></span></p>
+
+        <details class="settings-section" open>
+          <summary>🖨️ Εκτυπωτής &amp; ετικέτες</summary>
+          <div class="settings-grid">
+            <div class="form-group">
+              <label class="form-label" for="setPrinterType">Τύπος εκτυπωτή</label>
+              <select id="setPrinterType" class="form-select">
+                <option value="a4">A4 εκτυπωτής γραφείου (laser / inkjet)</option>
+                <option value="thermal">Θερμικός ετικετών (Zebra, Brother QL, Niimbot, Phomemo…)</option>
+                <option value="other">Άλλο</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="setPrinterModel">Μοντέλο (προαιρετικό)</label>
+              <input type="text" id="setPrinterModel" class="form-input" list="printerModelList" placeholder="π.χ. Brother QL-800">
+              <datalist id="printerModelList">
+                <option value="HP LaserJet"><option value="Canon PIXMA"><option value="Epson EcoTank">
+                <option value="Zebra ZD420"><option value="Zebra GK420d"><option value="Brother QL-800"><option value="Brother QL-820NWB">
+                <option value="Niimbot B1"><option value="Niimbot B21"><option value="Phomemo M110"><option value="Phomemo M220">
+              </datalist>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="setLabelPreset">Μέγεθος ετικέτας</label>
+              <select id="setLabelPreset" class="form-select">
+                <option value="70x42">70×42 mm — φύλλο A4 (3×7 = 21 ετικέτες)</option>
+                <option value="100x50">100×50 mm</option>
+                <option value="50x30">50×30 mm</option>
+                <option value="62x29">62×29 mm (Brother DK)</option>
+                <option value="40x30">40×30 mm</option>
+                <option value="custom">Προσαρμοσμένο…</option>
+              </select>
+            </div>
+            <div class="form-group settings-custom-size">
+              <label class="form-label">Πλάτος × Ύψος (mm)</label>
+              <div class="settings-inline">
+                <input type="number" id="setLabelW" class="form-input" min="20" max="210" step="1" inputmode="numeric">
+                <span>×</span>
+                <input type="number" id="setLabelH" class="form-input" min="15" max="297" step="1" inputmode="numeric">
+              </div>
+            </div>
+            <label class="aisle-tags-check settings-check" for="setShowCompanyOnLabels">
+              <input type="checkbox" id="setShowCompanyOnLabels">
+              <span>Όνομα εταιρείας πάνω στις ετικέτες (όπου χωράει)</span>
+            </label>
+          </div>
+          <p class="settings-hint" id="printModeHint"></p>
+          <div class="settings-label-preview-wrap">
+            <div class="settings-hint">Προεπισκόπηση (πραγματικό μέγεθος περίπου):</div>
+            <div id="labelPreviewBox"></div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="printTestLabel()"><i data-lucide="printer" style="width:16px"></i> Δοκιμαστική εκτύπωση</button>
+        </details>
+
+        <details class="settings-section" open>
+          <summary>🗺️ Ζώνες &amp; θέσεις αποθήκης</summary>
+          <p class="settings-hint">Κωδικός θέσης: ΖΩΝΗ-ΘΕΣΗ-ΥΨΟΣ (π.χ. <b>Β-07-2</b>, 1 = κάτω). Με 1 ύψος: ΖΩΝΗ-ΘΕΣΗ (π.χ. Χ-03). Θέσεις διαδρόμου: Β-07-Δ1 … Δ4.</p>
+          <div id="zonesEditor" class="zones-editor"></div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addZoneRow()"><i data-lucide="plus" style="width:16px"></i> Νέα ζώνη</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="resetZonesToDefault()"><i data-lucide="rotate-ccw" style="width:16px"></i> Επαναφορά σχεδίου</button>
+          </div>
+          <div class="settings-hint" id="zonesSummary"></div>
+          <button type="button" class="btn btn-emerald" onclick="printAllLocationLabels()"><i data-lucide="printer" style="width:16px"></i> Εκτύπωση ΟΛΩΝ των ετικετών θέσεων</button>
+        </details>
+
+        <details class="settings-section">
+          <summary>🏢 Στοιχεία εταιρείας</summary>
+          <div class="settings-grid">
+            <div class="form-group"><label class="form-label" for="setCompanyName">Επωνυμία</label><input type="text" id="setCompanyName" class="form-input"></div>
+            <div class="form-group"><label class="form-label" for="setCompanyAddress">Διεύθυνση</label><input type="text" id="setCompanyAddress" class="form-input"></div>
+            <div class="form-group"><label class="form-label" for="setCompanyPhone">Τηλέφωνο</label><input type="tel" id="setCompanyPhone" class="form-input"></div>
+            <div class="form-group"><label class="form-label" for="setCompanyVat">ΑΦΜ</label><input type="text" id="setCompanyVat" class="form-input" inputmode="numeric"></div>
+            <div class="form-group">
+              <label class="form-label" for="setCompanyLogoFile">Λογότυπο (προαιρετικό)</label>
+              <input type="file" id="setCompanyLogoFile" accept="image/*" class="form-input">
+              <div class="settings-logo-row">
+                <img id="setCompanyLogoPreview" alt="" hidden>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnRemoveLogo" onclick="removeCompanyLogo()" hidden>Αφαίρεση</button>
+              </div>
+            </div>
+          </div>
+          <p class="settings-hint">Εμφανίζονται στην κεφαλίδα της λίστας picking και (αν το επιλέξεις) στις ετικέτες.</p>
+        </details>
+
+        <details class="settings-section">
+          <summary>⏰ Ειδοποίηση λήξης</summary>
+          <div class="form-group" style="max-width: 260px;">
+            <label class="form-label" for="setExpiryDays">Μέρες πριν τη λήξη για ειδοποίηση «Λήγει»</label>
+            <input type="number" id="setExpiryDays" class="form-input" min="0" max="365" step="1" inputmode="numeric">
+          </div>
+        </details>
+
+        <div class="settings-save-bar">
+          <button type="button" class="btn btn-primary btn-full" id="btnSaveSettings" onclick="saveSettingsFromForm()"><i data-lucide="save" style="width:18px"></i> Αποθήκευση ρυθμίσεων</button>
+        </div>
+      </div>
+    </section>
 
     <!-- TAB 5: PICKING -->
     <section id="tab-picking" class="tab-content">
@@ -686,7 +800,7 @@
   <!-- pdf.js 3.11.174 (UMD) + tesseract.js 5.1.1 — PDF text / OCR import -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <!-- cache-bust: pick4 -->
-  <script src="app.js?v=pick4"></script>
+  <!-- cache-bust: set1 -->
+  <script src="app.js?v=set1"></script>
 </body>
 </html>

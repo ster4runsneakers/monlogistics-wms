@@ -50,6 +50,7 @@ let firebaseFallbackToastShown = false;
 document.addEventListener('DOMContentLoaded', () => {
   loadPalletsFromStorage();
   loadPickListsFromStorage();
+  loadSettingsFromStorage();
   const usingCloud = initFirebaseSync();
 
   // Initialize Lucide Icons if available
@@ -68,6 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateLinkUI();
   generateShelfGrid();
   initPickTabUI();
+  initSettingsUI();
 
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
@@ -279,6 +281,7 @@ function initFirebaseSync() {
     cloudEnabled = true;
     subscribePallets();
     subscribePickLists();
+    subscribeSettings();
     return true;
   } catch (e) {
     console.error("Firebase init failed:", e);
@@ -375,6 +378,9 @@ function switchTab(tabId) {
 
   if (tabId === 'tab-picking') {
     renderPickTab();
+  }
+  if (tabId === 'tab-settings') {
+    renderSettingsForm();
   }
 
   // Re-create icons for freshly visible tab elements
@@ -493,7 +499,7 @@ function expiryStatus(expiry) {
   const e = new Date(expiry + 'T00:00:00');
   if (Number.isNaN(e.getTime())) return null;
   const diffDays = Math.round((e - t) / 86400000);
-  if (diffDays <= 7) return 'soon';
+  if (diffDays <= getExpiryWarnDays()) return 'soon';
   return 'ok';
 }
 
@@ -641,18 +647,7 @@ function printActiveLabel() {
     showToast('Παρακαλώ δημιουργήστε πρώτα μια ετικέτα!', 'error');
     return;
   }
-  const labelElement = document.getElementById('printableLabel').cloneNode(true);
-  const printArea = document.getElementById('printArea');
-  printArea.innerHTML = '';
-  printArea.appendChild(labelElement);
-  printArea.style.display = 'flex';
-  
-  window.print();
-  
-  setTimeout(() => {
-    printArea.style.display = 'none';
-    printArea.innerHTML = '';
-  }, 1000);
+  printLabelsSized([palletToLabelSpec(activePalletForLabel)]);
 }
 
 function goToLinkWithCurrentPallet() {
@@ -1900,33 +1895,12 @@ function bindShelfTagPrintActions() {
 }
 
 function printSingleShelfTag(shelfCode) {
-  const grid = document.getElementById('shelfTagGrid');
-  if (!grid) {
+  if (!shelfCode) {
     showToast('Δεν βρέθηκε η ετικέτα ραφιού!', 'error');
     return;
   }
-  const card = Array.from(grid.querySelectorAll('.shelf-tag-card')).find(
-    (el) => el.dataset.shelfCode === shelfCode
-  );
-  if (!card) {
-    showToast('Δεν βρέθηκε η ετικέτα ραφιού!', 'error');
-    return;
-  }
-
-  const printArea = document.getElementById('printArea');
-  printArea.innerHTML = '';
-  const clone = card.cloneNode(true);
-  clone.querySelectorAll('.no-print').forEach((el) => el.remove());
-  printArea.appendChild(clone);
-  printArea.style.display = 'flex';
-
   showToast(`Εκτύπωση ετικέτας ${shelfCode}`, 'success');
-  window.print();
-
-  setTimeout(() => {
-    printArea.style.display = 'none';
-    printArea.innerHTML = '';
-  }, 1000);
+  printLabelsSized([locationCodeToLabelSpec(shelfCode)]);
 }
 
 function printAllShelfTags() {
@@ -1935,19 +1909,8 @@ function printAllShelfTags() {
     showToast('Δεν υπάρχουν ετικέτες ραφιών για εκτύπωση!', 'error');
     return;
   }
-  const printArea = document.getElementById('printArea');
-  printArea.innerHTML = '';
-  const clone = grid.cloneNode(true);
-  clone.querySelectorAll('.no-print').forEach((el) => el.remove());
-  printArea.appendChild(clone);
-  printArea.style.display = 'flex';
-
-  window.print();
-
-  setTimeout(() => {
-    printArea.style.display = 'none';
-    printArea.innerHTML = '';
-  }, 1000);
+  const codes = Array.from(grid.querySelectorAll('.shelf-tag-card')).map((el) => el.dataset.shelfCode).filter(Boolean);
+  printLabelsSized(codes.map(locationCodeToLabelSpec));
 }
 
 /* ==========================================================================
@@ -3713,6 +3676,7 @@ function printPickList(listId) {
   const wrap = document.createElement('div');
   wrap.className = 'print-pick-list';
   wrap.innerHTML = `
+    ${companyHeaderHtml()}
     <h1>Λίστα picking</h1>
     <div class="print-pick-meta">
       <div><strong>Πελάτης:</strong> ${escapeHtml(pl.customer)}</div>
@@ -3743,6 +3707,7 @@ function printPickList(listId) {
   printArea.innerHTML = '';
   printArea.appendChild(wrap);
   printArea.style.display = 'block';
+  applyDocumentPrintPage();
   window.print();
   setTimeout(() => {
     printArea.style.display = 'none';
@@ -4013,4 +3978,630 @@ function renderQRCode(container, text, size) {
 
 function renderFallbackQR(container, text, size) {
   renderQRCode(container, text, size);
+}
+
+/* ==========================================================================
+   TAB 6: SETTINGS (Firestore settings/main + localStorage mirror)
+   ========================================================================== */
+const SETTINGS_KEY = 'monlog_settings_v1';
+const LABEL_PRESETS = {
+  '70x42': { w: 70, h: 42, sheet: true },
+  '100x50': { w: 100, h: 50 },
+  '50x30': { w: 50, h: 30 },
+  '62x29': { w: 62, h: 29 },
+  '40x30': { w: 40, h: 30 }
+};
+
+function defaultZones() {
+  return [
+    { letter: 'Α', name: 'Αριστερός τοίχος', positions: 19, levels: 2, aisle: false },
+    { letter: 'Β', name: 'Νησίδα Β', positions: 24, levels: 2, aisle: false },
+    { letter: 'Γ', name: 'Νησίδα Γ', positions: 24, levels: 2, aisle: false },
+    { letter: 'Δ', name: 'Νησίδα Δ', positions: 24, levels: 2, aisle: false },
+    { letter: 'Ε', name: 'Δεξιός τοίχος', positions: 19, levels: 2, aisle: false },
+    { letter: 'Ζ', name: 'Διπλή σειρά κάτω', positions: 24, levels: 2, aisle: false },
+    { letter: 'Η', name: 'Μονή σειρά κάτω', positions: 12, levels: 2, aisle: false },
+    { letter: 'Χ', name: 'Ελεύθερος χώρος', positions: 10, levels: 1, aisle: false }
+  ];
+}
+
+function defaultSettings() {
+  return {
+    printer: { type: 'a4', model: '', labelPreset: '70x42', width: 70, height: 42, showCompany: true },
+    zones: defaultZones(),
+    company: { name: '', address: '', phone: '', vat: '', logo: '' },
+    expiryDays: 7
+  };
+}
+
+let appSettings = defaultSettings();
+let settingsUnsub = null;
+let settingsLoadedFromCloud = false;
+
+function clampInt(v, min, max, def) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, n));
+}
+
+function normalizeSettings(raw) {
+  const d = defaultSettings();
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const pr = r.printer && typeof r.printer === 'object' ? r.printer : {};
+  const preset = (pr.labelPreset === 'custom' || LABEL_PRESETS[pr.labelPreset]) ? pr.labelPreset : d.printer.labelPreset;
+  const base = LABEL_PRESETS[preset] || {};
+  const printer = {
+    type: ['a4', 'thermal', 'other'].includes(pr.type) ? pr.type : d.printer.type,
+    model: String(pr.model || '').slice(0, 80),
+    labelPreset: preset,
+    width: preset === 'custom' ? clampInt(pr.width, 20, 210, 70) : base.w,
+    height: preset === 'custom' ? clampInt(pr.height, 15, 297, 42) : base.h,
+    showCompany: pr.showCompany !== false
+  };
+  let zones = Array.isArray(r.zones) ? r.zones : d.zones;
+  zones = zones.map((z) => ({
+    letter: String((z && z.letter) || '').trim().toUpperCase().slice(0, 3),
+    name: String((z && z.name) || '').slice(0, 60),
+    positions: clampInt(z && z.positions, 1, 999, 1),
+    levels: clampInt(z && z.levels, 1, 9, 1),
+    aisle: !!(z && z.aisle)
+  })).filter((z) => z.letter);
+  if (!Array.isArray(r.zones)) zones = d.zones;
+  const c = r.company && typeof r.company === 'object' ? r.company : {};
+  const company = {
+    name: String(c.name || '').slice(0, 120),
+    address: String(c.address || '').slice(0, 200),
+    phone: String(c.phone || '').slice(0, 40),
+    vat: String(c.vat || '').slice(0, 20),
+    logo: typeof c.logo === 'string' && (c.logo.startsWith('data:image/') || /^https?:\/\//.test(c.logo)) ? c.logo : ''
+  };
+  return { printer, zones, company, expiryDays: clampInt(r.expiryDays, 0, 365, d.expiryDays) };
+}
+
+function getExpiryWarnDays() {
+  return appSettings && Number.isFinite(appSettings.expiryDays) ? appSettings.expiryDays : 7;
+}
+
+function loadSettingsFromStorage() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    appSettings = normalizeSettings(raw ? JSON.parse(raw) : null);
+  } catch (e) {
+    appSettings = defaultSettings();
+  }
+}
+
+function mirrorSettingsToLocal() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(appSettings)); } catch (e) { /* quota */ }
+}
+
+function subscribeSettings() {
+  if (!db) return;
+  if (settingsUnsub) settingsUnsub();
+  settingsUnsub = db.collection('settings').doc('main').onSnapshot((snap) => {
+    settingsLoadedFromCloud = true;
+    if (snap.exists) {
+      appSettings = normalizeSettings(snap.data());
+      mirrorSettingsToLocal();
+    }
+    onSettingsChanged(true);
+  }, (err) => {
+    console.error('Settings snapshot error:', err);
+  });
+}
+
+function onSettingsChanged(fromRemote) {
+  populateLocationDatalists();
+  // Re-render expiry badges with new threshold
+  try { renderInventoryTable(); renderProductSearch(); } catch (e) { /* not ready */ }
+  const tab = document.getElementById('tab-settings');
+  // Avoid clobbering in-progress edits; only re-render form when not visible or local save
+  if (tab && (!tab.classList.contains('active') || !fromRemote || !settingsFormDirty)) renderSettingsForm();
+  updateSettingsSyncNote();
+}
+
+function updateSettingsSyncNote() {
+  const el = document.getElementById('settingsSyncNote');
+  if (!el) return;
+  el.textContent = cloudEnabled ? '(Cloud ενεργό)' : '(Τοπική λειτουργία — μόνο σε αυτή τη συσκευή)';
+}
+
+/* ---------- Location codes from zones ---------- */
+function pad2(n) { return n < 10 ? '0' + n : String(n); }
+
+function zoneLocationCodes(z) {
+  const out = [];
+  for (let i = 1; i <= z.positions; i++) {
+    const base = `${z.letter}-${pad2(i)}`;
+    if (z.levels <= 1) out.push(base);
+    else for (let l = 1; l <= z.levels; l++) out.push(`${base}-${l}`);
+  }
+  return out;
+}
+
+function zoneAisleCodes(z) {
+  const out = [];
+  if (!z.aisle) return out;
+  for (let i = 1; i <= z.positions; i++) {
+    for (let r = 1; r <= 4; r++) out.push(formatAisleLocationCode(`${z.letter}-${pad2(i)}`, r));
+  }
+  return out;
+}
+
+function allConfiguredLocationCodes() {
+  const out = [];
+  (appSettings.zones || []).forEach((z) => { out.push(...zoneLocationCodes(z), ...zoneAisleCodes(z)); });
+  return out;
+}
+
+function populateLocationDatalists() {
+  const dl = document.getElementById('locationCodesList');
+  if (dl) {
+    dl.innerHTML = allConfiguredLocationCodes().map((c) => `<option value="${escapeHtml(c)}"></option>`).join('');
+  }
+  const zl = document.getElementById('zoneLettersList');
+  if (zl) {
+    zl.innerHTML = (appSettings.zones || []).map((z) => `<option value="${escapeHtml(z.letter)}">${escapeHtml(z.name)}</option>`).join('');
+  }
+}
+
+function applyManualLocation() {
+  const el = document.getElementById('manualLocationInput');
+  const v = el ? String(el.value || '').trim().toUpperCase() : '';
+  if (!v) { showToast('Γράψτε μια θέση', 'error'); return; }
+  simulateShelfScan(v);
+  if (el) el.value = '';
+}
+
+function describeLocationCode(code) {
+  const aisle = parseAisleLocationCode(code);
+  const baseCode = aisle ? aisle.base : code;
+  const m = String(baseCode).match(/^([^-]+)-(\d+)(?:-(\d+))?$/);
+  if (!m) return { zoneName: '', levelText: '', aisleRow: aisle ? aisle.row : null };
+  const z = (appSettings.zones || []).find((x) => x.letter === m[1]);
+  let levelText = '';
+  if (m[3] && !aisle) {
+    const lv = parseInt(m[3], 10);
+    const total = z ? z.levels : 0;
+    if (total === 2) levelText = lv === 1 ? 'ΚΑΤΩ' : 'ΠΑΝΩ';
+    else levelText = `ΥΨΟΣ ${lv}`;
+  }
+  return { zoneName: z ? z.name : '', levelText, aisleRow: aisle ? aisle.row : null };
+}
+
+/* ---------- Sized label printing ---------- */
+function getLabelSize() {
+  const p = appSettings.printer;
+  return { w: p.width, h: p.height, sheet: p.labelPreset === '70x42' && p.type !== 'thermal' };
+}
+
+function locationCodeToLabelSpec(code) {
+  const aisle = parseAisleLocationCode(code);
+  const info = describeLocationCode(code);
+  const lines = [];
+  if (aisle) lines.push(`ΔΙΑΔΡΟΜΟΣ μπροστά από ${aisle.base} · Σειρά ${aisle.row}`);
+  else {
+    if (info.levelText) lines.push(info.levelText);
+    if (info.zoneName) lines.push(info.zoneName);
+  }
+  return {
+    code,
+    lines,
+    qr: aisle ? `AISLE:${aisle.base}:${aisle.row}` : `SHELF:${code}`
+  };
+}
+
+function palletToLabelSpec(p) {
+  const items = normalizeItems(p.items);
+  const lines = [p.customer || ''];
+  items.slice(0, 2).forEach((it) => {
+    lines.push(`${it.name}${it.qty != null ? ' ×' + it.qty : ''}${it.expiry ? ' · λήξη ' + formatExpiryEl(it.expiry) : ''}`);
+  });
+  if (items.length > 2) lines.push(`+${items.length - 2} ακόμη`);
+  return { code: p.id, lines: lines.filter(Boolean), qr: `PALLET:${p.id}` };
+}
+
+function qrDataUrl(text, px) {
+  return new Promise((resolve) => {
+    if (typeof QRCode !== 'undefined' && typeof QRCode.toDataURL === 'function') {
+      try {
+        QRCode.toDataURL(String(text), { width: px, margin: 1, errorCorrectionLevel: 'M' }, (err, url) => {
+          resolve(err || !url ? null : url);
+        });
+        return;
+      } catch (e) { /* fall through */ }
+    }
+    resolve('https://api.qrserver.com/v1/create-qr-code/?size=' + px + 'x' + px + '&margin=1&data=' + encodeURIComponent(text));
+  });
+}
+
+function setPrintPageCss(css) {
+  let st = document.getElementById('mlPrintPageStyle');
+  if (!st) {
+    st = document.createElement('style');
+    st.id = 'mlPrintPageStyle';
+    document.head.appendChild(st);
+  }
+  st.textContent = css;
+}
+
+/** A4 page for documents (pick lists). Thermal: label width, long page. */
+function applyDocumentPrintPage() {
+  document.body.classList.add('ml-printing');
+  const p = appSettings.printer;
+  if (p.type === 'thermal') {
+    setPrintPageCss(`@media print { @page { size: ${p.width}mm auto; margin: 2mm; } #printArea .print-pick-list { font-size: 8pt; } }`);
+  } else {
+    setPrintPageCss('@media print { @page { size: A4 portrait; margin: 12mm; } }');
+  }
+  scheduleAfterPrintCleanup();
+}
+
+function scheduleAfterPrintCleanup() {
+  const done = () => {
+    document.body.classList.remove('ml-printing');
+    window.removeEventListener('afterprint', done);
+  };
+  window.addEventListener('afterprint', done);
+  setTimeout(done, 3000);
+}
+
+function companyLabelLine() {
+  const c = appSettings.company;
+  return appSettings.printer.showCompany && c.name ? c.name : '';
+}
+
+function companyHeaderHtml() {
+  const c = appSettings.company;
+  if (!c.name && !c.address && !c.phone && !c.vat && !c.logo) return '';
+  const parts = [c.address, c.phone ? 'Τηλ. ' + c.phone : '', c.vat ? 'ΑΦΜ ' + c.vat : ''].filter(Boolean);
+  return `<div class="print-company-header">
+    ${c.logo ? `<img src="${escapeHtml(c.logo)}" alt="" class="print-company-logo">` : ''}
+    <div>
+      ${c.name ? `<div class="print-company-name">${escapeHtml(c.name)}</div>` : ''}
+      ${parts.length ? `<div class="print-company-meta">${escapeHtml(parts.join(' · '))}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+/** Build label DOM nodes sized in mm. Returns { root, ready: Promise } */
+function buildSizedLabels(specs, size) {
+  const { w, h } = size;
+  const pad = Math.max(1.5, Math.min(3, h * 0.06));
+  const qrMm = Math.max(10, Math.min(h - pad * 2, w * 0.48));
+  const textW = w - qrMm - pad * 3;
+  const company = companyLabelLine();
+  const showCompany = company && h >= 28;
+  const codeFont = Math.max(3.5, Math.min(h * 0.26, textW / 4.2));
+  const lineFont = Math.max(2, Math.min(h * 0.085, 3.4));
+  const maxLines = Math.max(1, Math.floor((h - pad * 2 - codeFont * 1.2 - (showCompany ? lineFont * 1.3 : 0)) / (lineFont * 1.25)));
+  const root = document.createElement('div');
+  root.className = 'ml-label-sheet';
+  const jobs = [];
+  specs.forEach((sp) => {
+    const el = document.createElement('div');
+    el.className = 'ml-label';
+    el.style.cssText = `width:${w}mm;height:${h}mm;padding:${pad}mm;gap:${pad}mm;`;
+    const img = document.createElement('img');
+    img.className = 'ml-label-qr';
+    img.alt = 'QR';
+    img.style.cssText = `width:${qrMm}mm;height:${qrMm}mm;`;
+    const txt = document.createElement('div');
+    txt.className = 'ml-label-text';
+    txt.innerHTML = `${showCompany ? `<div class="ml-label-company" style="font-size:${lineFont}mm">${escapeHtml(company)}</div>` : ''}
+      <div class="ml-label-code" style="font-size:${codeFont}mm">${escapeHtml(sp.code)}</div>
+      ${(sp.lines || []).slice(0, maxLines).map((l) => `<div class="ml-label-line" style="font-size:${lineFont}mm">${escapeHtml(l)}</div>`).join('')}`;
+    el.appendChild(img);
+    el.appendChild(txt);
+    root.appendChild(el);
+    jobs.push(qrDataUrl(sp.qr, 300).then((url) => new Promise((res) => {
+      if (!url) { res(); return; }
+      img.onload = img.onerror = () => res();
+      img.src = url;
+    })));
+  });
+  return { root, ready: Promise.all(jobs) };
+}
+
+function labelPrintCss(size) {
+  const { w, h, sheet } = size;
+  const p = appSettings.printer;
+  if (sheet) {
+    // 70x42 on A4: 3 columns × 7 rows = 210 × 294mm, no margins
+    return `@media print {
+      @page { size: A4 portrait; margin: 0; }
+      #printArea.ml-labels-mode .ml-label-sheet { display:grid !important; grid-template-columns: repeat(3, ${w}mm); grid-auto-rows: ${h}mm; width:210mm; padding: 1.5mm 0 0 0; }
+      #printArea.ml-labels-mode .ml-label { border: 0.2mm dashed #bbb !important; }
+      #printArea.ml-labels-mode .ml-label:nth-child(21n) { break-after: page; page-break-after: always; }
+    }`;
+  }
+  if (p.type === 'a4') {
+    const cols = Math.max(1, Math.floor(200 / w));
+    return `@media print {
+      @page { size: A4 portrait; margin: 5mm; }
+      #printArea.ml-labels-mode .ml-label-sheet { display:grid !important; grid-template-columns: repeat(${cols}, ${w}mm); grid-auto-rows: ${h}mm; gap: 0; }
+      #printArea.ml-labels-mode .ml-label { border: 0.2mm dashed #bbb !important; }
+    }`;
+  }
+  // Thermal / other: one label per page, page = label size
+  return `@media print {
+    @page { size: ${w}mm ${h}mm; margin: 0; }
+    #printArea.ml-labels-mode .ml-label-sheet { display:block !important; }
+    #printArea.ml-labels-mode .ml-label { break-after: page; page-break-after: always; border: none !important; }
+    #printArea.ml-labels-mode .ml-label:last-child { break-after: auto; page-break-after: auto; }
+  }`;
+}
+
+let labelPrintBusy = false;
+async function printLabelsSized(specs) {
+  if (!specs || !specs.length) { showToast('Δεν υπάρχουν ετικέτες', 'error'); return; }
+  if (labelPrintBusy) return;
+  labelPrintBusy = true;
+  try {
+    const size = getLabelSize();
+    const printArea = document.getElementById('printArea');
+    if (!printArea) return;
+    if (specs.length > 30) showToast(`Προετοιμασία ${specs.length} ετικετών…`, 'success');
+    const { root, ready } = buildSizedLabels(specs, size);
+    await ready;
+    printArea.innerHTML = '';
+    printArea.className = 'ml-labels-mode';
+    printArea.appendChild(root);
+    printArea.style.display = 'block';
+    setPrintPageCss(labelPrintCss(size));
+    document.body.classList.add('ml-printing');
+    const cleanup = () => {
+      window.removeEventListener('afterprint', cleanup);
+      document.body.classList.remove('ml-printing');
+      printArea.style.display = 'none';
+      printArea.innerHTML = '';
+      printArea.className = '';
+    };
+    window.addEventListener('afterprint', cleanup);
+    window.print();
+    // Fallback for browsers without afterprint (print() blocks on most desktop)
+    setTimeout(() => { if (!window.__mlKeepPrintArea) cleanup(); }, 1500);
+  } finally {
+    labelPrintBusy = false;
+  }
+}
+
+function printAllLocationLabels(zoneIndex) {
+  const zones = appSettings.zones || [];
+  const list = typeof zoneIndex === 'number' ? [zones[zoneIndex]].filter(Boolean) : zones;
+  const codes = [];
+  list.forEach((z) => codes.push(...zoneLocationCodes(z), ...zoneAisleCodes(z)));
+  if (settingsFormDirty) showToast('Προσοχή: έχεις μη αποθηκευμένες αλλαγές — τυπώνονται οι αποθηκευμένες ρυθμίσεις', 'error');
+  printLabelsSized(codes.map(locationCodeToLabelSpec));
+}
+
+function printTestLabel() {
+  const z = (appSettings.zones || [])[1] || (appSettings.zones || [])[0];
+  const code = z ? zoneLocationCodes(z)[Math.min(13, zoneLocationCodes(z).length - 1)] : 'Β-07-2';
+  printLabelsSized([locationCodeToLabelSpec(code)]);
+}
+
+/* ---------- Settings form ---------- */
+let settingsFormDirty = false;
+let draftZones = null;
+let draftLogo = '';
+
+function initSettingsUI() {
+  populateLocationDatalists();
+  const tab = document.getElementById('tab-settings');
+  if (!tab) return;
+  tab.addEventListener('input', () => { settingsFormDirty = true; refreshSettingsDerived(); });
+  tab.addEventListener('change', (e) => {
+    settingsFormDirty = true;
+    if (e.target && e.target.id === 'setLabelPreset') {
+      const pr = LABEL_PRESETS[e.target.value];
+      if (pr) { setVal('setLabelW', pr.w); setVal('setLabelH', pr.h); }
+    }
+    if (e.target && e.target.id === 'setCompanyLogoFile') handleLogoFile(e.target);
+    refreshSettingsDerived();
+  });
+  const editor = document.getElementById('zonesEditor');
+  if (editor) {
+    editor.addEventListener('input', (e) => {
+      const row = e.target.closest('[data-zone-idx]');
+      if (!row) return;
+      const idx = Number(row.getAttribute('data-zone-idx'));
+      const f = e.target.getAttribute('data-f');
+      if (!draftZones[idx] || !f) return;
+      draftZones[idx][f] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    });
+    editor.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-zone-del]');
+      if (del) {
+        const idx = Number(del.getAttribute('data-zone-del'));
+        if (confirm(`Διαγραφή ζώνης ${draftZones[idx].letter || ''};`)) {
+          draftZones.splice(idx, 1);
+          settingsFormDirty = true;
+          renderZonesEditor();
+          refreshSettingsDerived();
+        }
+        return;
+      }
+      const pr = e.target.closest('[data-zone-print]');
+      if (pr) printAllLocationLabels(Number(pr.getAttribute('data-zone-print')));
+    });
+  }
+  renderSettingsForm();
+}
+
+function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; }
+function getVal(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+
+function renderSettingsForm() {
+  const s = appSettings;
+  setVal('setPrinterType', s.printer.type);
+  setVal('setPrinterModel', s.printer.model);
+  setVal('setLabelPreset', s.printer.labelPreset);
+  setVal('setLabelW', s.printer.width);
+  setVal('setLabelH', s.printer.height);
+  const sc = document.getElementById('setShowCompanyOnLabels');
+  if (sc) sc.checked = !!s.printer.showCompany;
+  setVal('setCompanyName', s.company.name);
+  setVal('setCompanyAddress', s.company.address);
+  setVal('setCompanyPhone', s.company.phone);
+  setVal('setCompanyVat', s.company.vat);
+  draftLogo = s.company.logo || '';
+  setVal('setExpiryDays', s.expiryDays);
+  draftZones = s.zones.map((z) => ({ ...z }));
+  settingsFormDirty = false;
+  renderZonesEditor();
+  renderLogoPreview();
+  refreshSettingsDerived();
+  updateSettingsSyncNote();
+}
+
+function renderZonesEditor() {
+  const ed = document.getElementById('zonesEditor');
+  if (!ed || !draftZones) return;
+  ed.innerHTML = draftZones.map((z, i) => `
+    <div class="zone-row" data-zone-idx="${i}">
+      <input class="form-input zone-letter" data-f="letter" value="${escapeHtml(z.letter)}" maxlength="3" aria-label="Γράμμα">
+      <input class="form-input zone-name" data-f="name" value="${escapeHtml(z.name)}" placeholder="Όνομα" aria-label="Όνομα">
+      <label class="zone-num"><span>Θέσεις</span><input class="form-input" type="number" min="1" max="999" inputmode="numeric" data-f="positions" value="${z.positions}"></label>
+      <label class="zone-num"><span>Ύψη</span><input class="form-input" type="number" min="1" max="9" inputmode="numeric" data-f="levels" value="${z.levels}"></label>
+      <label class="zone-aisle"><input type="checkbox" data-f="aisle" ${z.aisle ? 'checked' : ''}><span>Διάδρ. Δ1–Δ4</span></label>
+      <div class="zone-btns">
+        <button type="button" class="btn btn-secondary btn-sm" data-zone-print="${i}" title="Εκτύπωση ετικετών ζώνης">🖨️</button>
+        <button type="button" class="btn btn-secondary btn-sm zone-del" data-zone-del="${i}" title="Διαγραφή">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+function addZoneRow() {
+  if (!draftZones) draftZones = [];
+  draftZones.push({ letter: '', name: '', positions: 10, levels: 2, aisle: false });
+  settingsFormDirty = true;
+  renderZonesEditor();
+  const rows = document.querySelectorAll('#zonesEditor .zone-letter');
+  if (rows.length) rows[rows.length - 1].focus();
+}
+
+function resetZonesToDefault() {
+  if (!confirm('Επαναφορά των ζωνών στο αρχικό σχέδιο αποθήκης;')) return;
+  draftZones = defaultZones();
+  settingsFormDirty = true;
+  renderZonesEditor();
+  refreshSettingsDerived();
+}
+
+function refreshSettingsDerived() {
+  const preset = getVal('setLabelPreset');
+  const custom = document.querySelector('.settings-custom-size');
+  if (custom) custom.classList.toggle('is-custom', preset === 'custom');
+  ['setLabelW', 'setLabelH'].forEach((id) => { const el = document.getElementById(id); if (el) el.readOnly = preset !== 'custom'; });
+  const type = getVal('setPrinterType');
+  const hint = document.getElementById('printModeHint');
+  const w = clampInt(getVal('setLabelW'), 20, 210, 70);
+  const h = clampInt(getVal('setLabelH'), 15, 297, 42);
+  if (hint) {
+    if (preset === '70x42' && type !== 'thermal') hint.textContent = 'Τυπώνει σε φύλλα A4 με 21 αυτοκόλλητα (3×7). Στο παράθυρο εκτύπωσης: Κλίμακα 100% / «Πραγματικό μέγεθος», χωρίς περιθώρια.';
+    else if (type === 'a4') hint.textContent = `Τυπώνει πολλές ετικέτες ${w}×${h} mm σε κάθε A4 με γραμμές κοπής.`;
+    else hint.textContent = `Κάθε ετικέτα ${w}×${h} mm τυπώνεται σε δική της σελίδα. Στον οδηγό του εκτυπωτή διάλεξε το ίδιο χαρτί ${w}×${h} mm.`;
+  }
+  // Preview
+  const box = document.getElementById('labelPreviewBox');
+  if (box && settingsPreviewSize !== `${w}x${h}`) {
+    settingsPreviewSize = `${w}x${h}`;
+    const { root } = buildSizedLabels([locationCodeToLabelSpec('Β-07-2')], { w, h });
+    box.innerHTML = '';
+    box.appendChild(root);
+  }
+  const sum = document.getElementById('zonesSummary');
+  if (sum && draftZones) {
+    let n = 0;
+    draftZones.forEach((z) => {
+      const nz = normalizeSettings({ zones: [z] }).zones[0];
+      if (nz) n += zoneLocationCodes(nz).length + zoneAisleCodes(nz).length;
+    });
+    sum.textContent = `Σύνολο: ${n} ετικέτες θέσεων.`;
+  }
+}
+let settingsPreviewSize = '';
+
+function handleLogoFile(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 240;
+      const sc = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * sc));
+      c.height = Math.max(1, Math.round(img.height * sc));
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      draftLogo = c.toDataURL('image/jpeg', 0.85);
+      settingsFormDirty = true;
+      renderLogoPreview();
+    };
+    img.onerror = () => showToast('Μη έγκυρη εικόνα', 'error');
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(f);
+}
+
+function removeCompanyLogo() {
+  draftLogo = '';
+  settingsFormDirty = true;
+  const fi = document.getElementById('setCompanyLogoFile');
+  if (fi) fi.value = '';
+  renderLogoPreview();
+}
+
+function renderLogoPreview() {
+  const img = document.getElementById('setCompanyLogoPreview');
+  const btn = document.getElementById('btnRemoveLogo');
+  if (img) { img.hidden = !draftLogo; if (draftLogo) img.src = draftLogo; else img.removeAttribute('src'); }
+  if (btn) btn.hidden = !draftLogo;
+}
+
+function saveSettingsFromForm() {
+  const letters = (draftZones || []).map((z) => String(z.letter || '').trim().toUpperCase()).filter(Boolean);
+  const dup = letters.find((l, i) => letters.indexOf(l) !== i);
+  if (dup) { showToast(`Η ζώνη ${dup} υπάρχει δύο φορές`, 'error'); return; }
+  if (letters.some((l) => /[-:\s]/.test(l))) { showToast('Το γράμμα ζώνης δεν μπορεί να έχει παύλα ή κενό', 'error'); return; }
+  const sc = document.getElementById('setShowCompanyOnLabels');
+  const next = normalizeSettings({
+    printer: {
+      type: getVal('setPrinterType'),
+      model: getVal('setPrinterModel').trim(),
+      labelPreset: getVal('setLabelPreset'),
+      width: getVal('setLabelW'),
+      height: getVal('setLabelH'),
+      showCompany: sc ? sc.checked : true
+    },
+    zones: draftZones || [],
+    company: {
+      name: getVal('setCompanyName').trim(),
+      address: getVal('setCompanyAddress').trim(),
+      phone: getVal('setCompanyPhone').trim(),
+      vat: getVal('setCompanyVat').trim(),
+      logo: draftLogo
+    },
+    expiryDays: getVal('setExpiryDays')
+  });
+  appSettings = next;
+  mirrorSettingsToLocal();
+  settingsFormDirty = false;
+  settingsPreviewSize = '';
+  onSettingsChanged(false);
+  if (cloudEnabled && db) {
+    db.collection('settings').doc('main').set({ ...next, updatedAt: new Date().toISOString() })
+      .then(() => showToast('Οι ρυθμίσεις αποθηκεύτηκαν για όλες τις συσκευές', 'success'))
+      .catch((err) => {
+        console.error('Settings save failed:', err);
+        showToast('Αποθηκεύτηκαν μόνο τοπικά — σφάλμα cloud', 'error');
+      });
+  } else {
+    showToast('Οι ρυθμίσεις αποθηκεύτηκαν (τοπικά)', 'success');
+  }
 }
