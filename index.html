@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set21">
+  <link rel="stylesheet" href="styles.css?v=set22">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -657,6 +657,17 @@
         </details>
 
         <details class="settings-section">
+          <summary>🔗 Πύλη πελάτη (link μόνο για προβολή)</summary>
+          <p class="settings-hint">Φτιάξε ένα link για έναν πελάτη. Όποιος το ανοίξει βλέπει <strong>μόνο</strong> τις παλέτες αυτού του πελάτη σε αυτή την αποθήκη (θέση, προϊόντα, λήξεις), χωρίς να μπορεί να αλλάξει κάτι.</p>
+          <div class="wh-row" style="flex-wrap:wrap;gap:.5rem">
+            <select id="portalClientSelect" class="form-select" style="max-width:260px"></select>
+            <button type="button" class="btn btn-primary btn-sm" onclick="createPortalLink()">➕ Δημιουργία link</button>
+          </div>
+          <div id="portalList" style="margin-top:.6rem"></div>
+          <p class="settings-hint">⚠️ Όποιος έχει το link το βλέπει. Αν χαθεί ή δεν το θες πια, πάτα «Ακύρωση».</p>
+        </details>
+
+        <details class="settings-section">
           <summary>⏰ Ειδοποίηση λήξης</summary>
           <div class="form-group" style="max-width: 260px;">
             <label class="form-label" for="setExpiryDays">Μέρες πριν τη λήξη για ειδοποίηση «Λήγει»</label>
@@ -892,7 +903,7 @@
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set21</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set22</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -963,6 +974,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set21"></script>
+  <script src="app.js?v=set22"></script>
 </body>
 </html>

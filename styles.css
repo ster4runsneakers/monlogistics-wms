@@ -2251,3 +2251,13 @@ body {
 .smart-loc-btn{display:flex;flex-direction:column;align-items:flex-start;padding:.45rem .65rem;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:inherit;cursor:pointer;min-width:7.5rem;text-align:left}
 .smart-loc-btn b{font-size:1rem}.smart-loc-btn small{font-size:.7rem;opacity:.75}
 .smart-loc-btn.best{border-color:#10b981;background:rgba(16,185,129,.15)}
+
+/* set22 client portal */
+body.portal-mode > *:not(#portalView):not(#toastContainer){display:none !important}
+.portal-view{max-width:820px;margin:0 auto;padding:1rem}
+.portal-head h1{margin:0;font-size:1.5rem}.portal-head{margin-bottom:.8rem}
+.portal-card{border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:.6rem .75rem;margin:.5rem 0}
+.portal-card-head{display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap}
+.portal-item{display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding:.2rem 0;border-top:1px solid rgba(255,255,255,.06);font-size:.9rem}
+.portal-exp{font-size:.8rem;opacity:.85}.portal-exp.soon{color:#f59e0b;opacity:1}.portal-exp.expired{color:#ef4444;opacity:1}
+.portal-row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin:.35rem 0}.portal-row input{flex:1;min-width:180px;font-size:.75rem}

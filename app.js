@@ -1,4 +1,4 @@
-const APP_VERSION = 'set21';
+const APP_VERSION = 'set22';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -76,6 +76,7 @@ let firebaseFallbackToastShown = false;
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
   loadPalletsFromStorage();
+  if (initClientPortalIfRequested()) return;
   loadPickListsFromStorage();
   if (!warehouses.some((w) => w.id === currentWh)) currentWh = 'w1';
   loadSettingsFromStorage();
@@ -100,6 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initPickTabUI();
   initSettingsUI();
   loadBilling();
+  loadPortalList();
 
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
@@ -426,7 +428,7 @@ function switchTab(tabId) {
   if (tabId === 'tab-map') renderMapTab();
   if (tabId === 'tab-billing') initBillingTab();
   if (tabId === 'tab-dash') renderDashboard();
-  if (tabId === 'tab-settings') try { renderBillingPrices(); } catch (e) { /* */ }
+  if (tabId === 'tab-settings') try { renderBillingPrices(); renderPortalSettings(); } catch (e) { /* */ }
 
   // Re-create icons for freshly visible tab elements
   if (window.lucide) {
@@ -5391,6 +5393,7 @@ function selectWarehouse(id) {
   loadSettingsFromStorage();
   if (cloudEnabled && db) subscribeSettings();
   try { loadBilling(); } catch (e) { console.error(e); }
+  try { loadPortalList(); } catch (e) { console.error(e); }
   try { loadCountState(); } catch (e) { /* */ }
   renderWarehouseUI();
   try { onSettingsChanged(false); } catch (e) { console.error(e); }
@@ -5731,4 +5734,135 @@ function renderSmartLinkBox() {
   const el = document.getElementById('smartLocBox'); if (!el) return;
   if (!scanStepPallet || scanStepShelf) { el.innerHTML = ''; return; }
   el.innerHTML = smartLocHtml(suggestLocations(scanStepPallet.id, scanStepPallet.customer), 'useSmartLinkLoc');
+}
+
+/* ==========================================================================
+   set22: ΠΥΛΗ ΠΕΛΑΤΗ (read-only link ?client=<token>)
+   ΠΡΟΣΟΧΗ: πραγματική ασφάλεια χρειάζεται Firestore rules/auth.
+   ========================================================================== */
+const PORTALS_LOCAL_KEY = 'monlog_client_portals_v1';
+let portalList = [];
+let portalUnsub = null;
+function randomToken() {
+  const a = new Uint8Array(18); (window.crypto || window.msCrypto).getRandomValues(a);
+  return Array.from(a, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+function portalUrl(token) { return location.origin + location.pathname + '?client=' + token; }
+function loadLocalPortals() { try { return JSON.parse(localStorage.getItem(PORTALS_LOCAL_KEY) || '[]'); } catch (e) { return []; } }
+function saveLocalPortals(list) { try { localStorage.setItem(PORTALS_LOCAL_KEY, JSON.stringify(list)); } catch (e) { /* */ } }
+function loadPortalList() {
+  if (portalUnsub) { try { portalUnsub(); } catch (e) { /* */ } portalUnsub = null; }
+  portalList = loadLocalPortals().filter((x) => x.warehouseId === currentWh);
+  if (cloudEnabled && db) {
+    const wh = currentWh;
+    portalUnsub = db.collection('clientPortals').where('warehouseId', '==', wh).onSnapshot((snap) => {
+      if (wh !== currentWh) return;
+      portalList = []; snap.forEach((d) => portalList.push({ token: d.id, ...d.data() }));
+      renderPortalSettings();
+    }, (err) => console.error('Portals snapshot error:', err));
+  }
+  renderPortalSettings();
+}
+function renderPortalSettings() {
+  const sel = document.getElementById('portalClientSelect');
+  if (sel) {
+    const cur = sel.value;
+    const names = new Set(); pallets.forEach((p) => { if (p.customer) names.add(String(p.customer).trim()); });
+    sel.innerHTML = '<option value="">— Διάλεξε πελάτη —</option>' + Array.from(names).sort((a, b) => a.localeCompare(b, 'el')).map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    sel.value = cur;
+  }
+  const host = document.getElementById('portalList'); if (!host) return;
+  const list = portalList.slice().sort((a, b) => String(a.client).localeCompare(String(b.client), 'el'));
+  host.innerHTML = list.length ? list.map((x) => `<div class="portal-row"><strong>${escapeHtml(x.client)}</strong>
+      <input class="form-input" readonly value="${escapeHtml(portalUrl(x.token))}" onclick="this.select()">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="copyPortalLink('${escapeHtml(x.token)}')">📋 Αντιγραφή</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="revokePortal('${escapeHtml(x.token)}')">🚫 Ακύρωση</button></div>`).join('')
+    : '<span class="wh-dim">Δεν υπάρχουν links ακόμα.</span>';
+}
+function createPortalLink() {
+  const client = getVal('portalClientSelect');
+  if (!client) { showToast('Διάλεξε πελάτη', 'error'); return; }
+  const token = randomToken();
+  const doc = { client, warehouseId: currentWh, warehouseName: whName(currentWh), createdAt: new Date().toISOString() };
+  if (cloudEnabled && db) {
+    db.collection('clientPortals').doc(token).set(doc).then(() => { copyPortalLink(token); })
+      .catch((err) => { console.error(err); showToast('Σφάλμα cloud — δεν δημιουργήθηκε', 'error'); });
+  } else {
+    const all = loadLocalPortals(); all.push({ token, ...doc }); saveLocalPortals(all);
+    portalList.push({ token, ...doc }); renderPortalSettings();
+    showToast('Δημιουργήθηκε (τοπικά — χωρίς cloud δεν θα ανοίγει σε άλλη συσκευή)', 'success');
+  }
+}
+function copyPortalLink(token) {
+  const url = portalUrl(token);
+  const done = () => showToast('Το link αντιγράφηκε — στείλ\' το στον πελάτη', 'success');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, () => prompt('Αντέγραψε το link:', url));
+  else prompt('Αντέγραψε το link:', url);
+}
+function revokePortal(token) {
+  if (!confirm('Να ακυρωθεί αυτό το link; Ο πελάτης δεν θα μπορεί πια να το ανοίξει.')) return;
+  saveLocalPortals(loadLocalPortals().filter((x) => x.token !== token));
+  portalList = portalList.filter((x) => x.token !== token);
+  if (cloudEnabled && db) db.collection('clientPortals').doc(token).delete().catch((err) => { console.error(err); showToast('Σφάλμα cloud', 'error'); });
+  renderPortalSettings();
+}
+
+/* ---- Portal view (opened by the client) ---- */
+function getPortalTokenFromUrl() {
+  try { const t = new URLSearchParams(location.search).get('client'); return t && /^[a-f0-9]{16,64}$/i.test(t) ? t : null; } catch (e) { return null; }
+}
+function portalShow(html) {
+  document.body.classList.add('portal-mode');
+  let v = document.getElementById('portalView');
+  if (!v) { v = document.createElement('div'); v.id = 'portalView'; v.className = 'portal-view'; document.body.insertBefore(v, document.body.firstChild); }
+  v.innerHTML = html;
+}
+function renderPortalPallets(info, list) {
+  const stock = list.filter((p) => isInStock(p) && whOf(p) === info.warehouseId && String(p.customer || '').trim() === info.client)
+    .sort((a, b) => String(a.shelf || '').localeCompare(String(b.shelf || ''), 'el', { numeric: true }));
+  let soon = 0, exp = 0;
+  const rows = stock.map((p) => {
+    const items = normalizeItems(p.items);
+    if (items.some((it) => expiryStatus(it.expiry) === 'expired')) exp++; else if (palletNearExpiry(p)) soon++;
+    const itemsHtml = items.length ? items.map((it) => {
+      const st = expiryStatus(it.expiry);
+      return `<div class="portal-item"><span>${escapeHtml(it.name)}${it.qty != null ? ' · <b>' + escapeHtml(String(it.qty)) + '</b>' : ''}</span>${it.expiry ? `<span class="portal-exp ${st || ''}">${st === 'expired' ? '❌ έληξε ' : st === 'soon' ? '⚠️ λήγει ' : 'λήξη '}${escapeHtml(formatExpiryEl(it.expiry))}</span>` : ''}</div>`;
+    }).join('') : '<span class="wh-dim">—</span>';
+    return `<div class="portal-card"><div class="portal-card-head"><strong>📦 ${escapeHtml(p.id)}</strong><span>📍 ${escapeHtml(p.shelf || 'χωρίς θέση')}</span></div>
+      <div class="wh-dim" style="font-size:.8rem">Είσοδος: ${escapeHtml(fmtYmd(isoToYmd(p.createdAt)))}</div>${itemsHtml}</div>`;
+  }).join('');
+  portalShow(`<div class="portal-head"><h1>${escapeHtml(info.client)}</h1><div class="wh-dim">${escapeHtml(info.warehouseName || 'MonLogistics')} · Ενημέρωση ${escapeHtml(fmtDateTime(new Date().toISOString()))}</div></div>
+    <div class="dash-kpis"><div class="dash-kpi" style="background:rgba(129,140,248,.15)"><b>${stock.length}</b><span>παλέτες στην αποθήκη</span></div><div class="dash-kpi"><b>${soon}</b><span>λήγουν σύντομα</span></div><div class="dash-kpi red"><b>${exp}</b><span>έληξαν</span></div></div>
+    <input class="form-input" placeholder="🔎 Αναζήτηση προϊόντος…" oninput="portalFilter(this.value)" style="margin:.5rem 0">
+    <div id="portalCards">${rows || '<p class="wh-dim">Δεν υπάρχουν παλέτες αυτή τη στιγμή.</p>'}</div>
+    <p class="wh-dim" style="font-size:.75rem;margin-top:1rem">Μόνο προβολή · MonLogistics WMS</p>`);
+}
+function portalFilter(q) {
+  const f = foldSearchText(q || '');
+  document.querySelectorAll('#portalCards .portal-card').forEach((c) => { c.hidden = !!f && !foldSearchText(c.innerText).includes(f); });
+}
+/** Returns true when the app was opened as a client portal (normal app init is skipped). */
+function initClientPortalIfRequested() {
+  const token = getPortalTokenFromUrl();
+  if (!token) return false;
+  portalShow('<p style="padding:2rem">Φόρτωση…</p>');
+  const local = loadLocalPortals().find((x) => x.token === token);
+  const cfg = window.MONLOG_FIREBASE_CONFIG;
+  if (!isFirebaseConfigReady(cfg) || typeof firebase === 'undefined') {
+    if (local) { renderPortalPallets(local, allPallets.length ? allPallets : pallets); return true; }
+    portalShow('<p style="padding:2rem">Δεν είναι δυνατή η σύνδεση. Δοκιμάστε ξανά αργότερα.</p>'); return true;
+  }
+  try {
+    if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(cfg);
+    const fdb = firebase.firestore();
+    fdb.collection('clientPortals').doc(token).get().then((s) => {
+      if (!s.exists) { portalShow('<p style="padding:2rem">❌ Το link δεν είναι έγκυρο ή έχει ακυρωθεί.</p>'); return; }
+      const info = s.data();
+      fdb.collection('pallets').where('customer', '==', info.client).onSnapshot((snap) => {
+        const list = []; snap.forEach((d) => list.push(normalizePallet({ id: d.id, ...d.data() })));
+        renderPortalPallets(info, list);
+      }, (err) => { console.error(err); portalShow('<p style="padding:2rem">Σφάλμα φόρτωσης.</p>'); });
+    }).catch((err) => { console.error(err); portalShow('<p style="padding:2rem">Σφάλμα φόρτωσης.</p>'); });
+  } catch (e) { console.error(e); portalShow('<p style="padding:2rem">Σφάλμα φόρτωσης.</p>'); }
+  return true;
 }
