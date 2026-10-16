@@ -1,4 +1,4 @@
-const APP_VERSION = 'set5';
+const APP_VERSION = 'set6';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -4441,9 +4441,10 @@ async function buildSingleLabelDoc(specs, p) {
 @page { size: ${pw}mm ${ph}mm; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root { --u: min(calc(100vw / ${pw}), calc(100vh / ${ph})); }
-html, body { width: 100vw; margin: 0; padding: 0; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html, body { width: 100vw; height: ${specs.length === 1 ? '100vh' : 'auto'}; overflow: ${specs.length === 1 ? 'hidden' : 'visible'}; margin: 0; padding: 0; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .pg { position: relative; width: 100vw; height: 100vh; overflow: hidden; display: flex; align-items: center; justify-content: center; break-after: page; page-break-after: always; }
-.pg:last-child { break-after: auto; page-break-after: auto; }
+.pg:last-child { break-after: avoid; page-break-after: avoid; }
+.pg > .box { break-inside: avoid; }
 .box { position: relative; width: calc(var(--u) * ${pw}); height: calc(var(--u) * ${ph}); overflow: hidden; flex: 0 0 auto; }
 .lab { overflow: hidden; }
 img { display: block; image-rendering: pixelated; }
@@ -4453,8 +4454,12 @@ fit();window.addEventListener('beforeprint',fit);window.addEventListener('resize
 <\/script></body></html>`;
 }
 
+let iframePrintLockUntil = 0;
 function printHtmlInIframe(html) {
   return new Promise((resolve) => {
+    // v=set6: never start a second print job while one is pending (double tap / repeat click)
+    if (Date.now() < iframePrintLockUntil) { resolve(); return; }
+    iframePrintLockUntil = Date.now() + 4000;
     const old = document.getElementById('mlPrintFrame');
     if (old) old.remove();
     const fr = document.createElement('iframe');
@@ -4469,6 +4474,7 @@ function printHtmlInIframe(html) {
       .then(() => setTimeout(() => {
         fr.contentWindow.focus();
         fr.contentWindow.print();
+        iframePrintLockUntil = Date.now() + 1500;
         setTimeout(() => { fr.remove(); resolve(); }, 60000);
       }, 50));
   });
