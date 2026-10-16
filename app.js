@@ -1,4 +1,4 @@
-const APP_VERSION = 'set7';
+const APP_VERSION = 'set8';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -4386,7 +4386,7 @@ function singleLabelPageGeometry(p) {
 }
 
 function singleLabelInnerHtml(sp, qrUrl, boxW, boxH, layout, company) {
-  // v=set7: outer safe margin is applied by the caller; here only a small gap
+  // v=set8: outer safe margin is applied by the caller; here only a small gap
   const pad = Math.max(0.8, Math.min(1.5, Math.min(boxW, boxH) * 0.04));
   const e = escapeHtml;
   if (layout === 'row') {
@@ -4428,7 +4428,7 @@ async function buildSingleLabelDoc(specs, p) {
   const company = p.showCompany && c.name ? c.name : '';
   const urls = await Promise.all(specs.map((sp) => qrDataUrl(sp.qr, 400)));
   const U = (h) => h.replace(/(-?\d+(?:\.\d+)?)mm/g, 'calc(var(--u) * $1)');
-  // v=set7: safe margin inside the label (DYMO/thermal printable area is smaller than the label).
+  // v=set8: safe margin inside the label (DYMO/thermal printable area is smaller than the label).
   // DYMO paper is portrait; the feed edges (top/bottom of the page) get +1.5mm extra.
   const m = (() => { const v = parseFloat(p.safeMargin); return isFinite(v) ? Math.max(0, Math.min(10, v)) : 3; })();
   const mx = Math.min(m, pw * 0.25), my = Math.min(m + (p.type === 'dymo' && m > 0 ? 1.5 : 0), ph * 0.25);
@@ -4801,3 +4801,11 @@ function saveSettingsFromForm() {
     showToast('Οι ρυθμίσεις αποθηκεύτηκαν (τοπικά)', 'success');
   }
 }
+
+/* Zone field: show all zones on focus (datalist filters by current text) */
+(function () {
+  const inp = document.getElementById('shelfZoneInput');
+  if (!inp) return;
+  inp.addEventListener('focus', () => { inp.dataset.prev = inp.value; inp.value = ''; });
+  inp.addEventListener('blur', () => { if (!inp.value.trim()) inp.value = inp.dataset.prev || 'Α'; });
+})();
