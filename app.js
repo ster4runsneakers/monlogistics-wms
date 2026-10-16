@@ -1,4 +1,4 @@
-const APP_VERSION = 'set9';
+const APP_VERSION = 'set10';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -4005,12 +4005,12 @@ const DYMO_DEFAULT_PRESET = 'dymo-99014';
 
 function defaultZones() {
   return [
-    { letter: 'Α', name: 'Αριστερός τοίχος', positions: 19, levels: 3, aisle: true },
-    { letter: 'Β', name: 'Νησίδα Β', positions: 24, levels: 3, aisle: true },
-    { letter: 'Γ', name: 'Νησίδα Γ', positions: 24, levels: 3, aisle: true },
-    { letter: 'Δ', name: 'Νησίδα Δ', positions: 24, levels: 3, aisle: true },
+    { letter: 'Α', name: 'Αριστερός τοίχος', positions: 11, levels: 3, aisle: true },
+    { letter: 'Β', name: 'Νησίδα Β', positions: 12, levels: 3, aisle: true },
+    { letter: 'Γ', name: 'Νησίδα Γ', positions: 12, levels: 3, aisle: true },
+    { letter: 'Δ', name: 'Νησίδα Δ', positions: 12, levels: 3, aisle: true },
     { letter: 'Ε', name: 'Δεξιός τοίχος', positions: 19, levels: 3, aisle: true },
-    { letter: 'Ζ', name: 'Διπλή σειρά κάτω', positions: 24, levels: 3, aisle: true },
+    { letter: 'Ζ', name: 'Διπλή σειρά κάτω', positions: 8, levels: 3, aisle: true },
     { letter: 'Η', name: 'Μονή σειρά κάτω', positions: 12, levels: 3, aisle: true },
     { letter: 'Χ', name: 'Ελεύθερος χώρος', positions: 10, levels: 1, aisle: false }
   ];
@@ -4386,7 +4386,7 @@ function singleLabelPageGeometry(p) {
 }
 
 function singleLabelInnerHtml(sp, qrUrl, boxW, boxH, layout, company) {
-  // v=set9: outer safe margin is applied by the caller; here only a small gap
+  // v=set10: outer safe margin is applied by the caller; here only a small gap
   const pad = Math.max(0.8, Math.min(1.5, Math.min(boxW, boxH) * 0.04));
   const e = escapeHtml;
   if (layout === 'row') {
@@ -4428,7 +4428,7 @@ async function buildSingleLabelDoc(specs, p) {
   const company = p.showCompany && c.name ? c.name : '';
   const urls = await Promise.all(specs.map((sp) => qrDataUrl(sp.qr, 400)));
   const U = (h) => h.replace(/(-?\d+(?:\.\d+)?)mm/g, 'calc(var(--u) * $1)');
-  // v=set9: safe margin inside the label (DYMO/thermal printable area is smaller than the label).
+  // v=set10: safe margin inside the label (DYMO/thermal printable area is smaller than the label).
   // DYMO paper is portrait; the feed edges (top/bottom of the page) get +1.5mm extra.
   const m = (() => { const v = parseFloat(p.safeMargin); return isFinite(v) ? Math.max(0, Math.min(10, v)) : 3; })();
   const mx = Math.min(m, pw * 0.25), my = Math.min(m + (p.type === 'dymo' && m > 0 ? 1.5 : 0), ph * 0.25);
