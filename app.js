@@ -1,4 +1,4 @@
-const APP_VERSION = 'set13';
+const APP_VERSION = 'set14';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -5185,3 +5185,85 @@ function renderCountTab() {
   if (sum) sum.innerHTML = countState.finished ? countSummaryHtml() : '';
 }
 loadCountState();
+
+
+/* ==========================================================================
+   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set14)
+   ========================================================================== */
+let mapSelected = null; // base code e.g. "Β-07"
+
+function positionSlots(z, i) {
+  const base = `${z.letter}-${pad2(i)}`;
+  const slots = z.levels <= 1 ? [base] : Array.from({ length: z.levels }, (_, k) => `${base}-${k + 1}`);
+  const aisle = z.aisle ? [1, 2, 3, 4].map((r) => formatAisleLocationCode(base, r)) : [];
+  const loose = z.levels > 1 ? [base] : []; // old codes without level, e.g. "Β-07"
+  return { base, slots, aisle, loose };
+}
+
+function palletNearExpiry(p) {
+  return normalizeItems(p.items).some((it) => { const s = expiryStatus(it.expiry); return s === 'soon' || s === 'expired'; });
+}
+
+function renderMapTab() {
+  const sel = document.getElementById('mapZoneSelect');
+  const host = document.getElementById('mapGrid');
+  if (!host) return;
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Όλες οι ζώνες</option>' + (appSettings.zones || []).map((z) => `<option value="${escapeHtml(z.letter)}">${escapeHtml(z.letter + ' · ' + z.name)}</option>`).join('');
+    sel.value = cur;
+  }
+  const only = sel ? sel.value : '';
+  const byCode = {};
+  pallets.filter((p) => isInStock(p) && p.shelf).forEach((p) => { (byCode[p.shelf] = byCode[p.shelf] || []).push(p); });
+  const known = new Set(allConfiguredLocationCodes());
+  (appSettings.zones || []).forEach((z) => { if (z.levels > 1) for (let i = 1; i <= z.positions; i++) known.add(`${z.letter}-${pad2(i)}`); });
+  const offMap = pallets.filter((p) => isInStock(p) && p.shelf && !known.has(p.shelf));
+  const noLoc = pallets.filter((p) => isInStock(p) && !p.shelf);
+  let html = '';
+  (appSettings.zones || []).filter((z) => !only || z.letter === only).forEach((z) => {
+    let cells = '';
+    let used = 0, total = 0;
+    for (let i = 1; i <= z.positions; i++) {
+      const ps = positionSlots(z, i);
+      const all = [...ps.slots, ...ps.aisle, ...ps.loose];
+      const looseFilled = ps.loose.filter((c) => byCode[c] && byCode[c].length).length;
+      const filled = all.filter((c) => byCode[c] && byCode[c].length).length;
+      const shelfFilled = ps.slots.filter((c) => byCode[c] && byCode[c].length).length;
+      const aisleFilled = ps.aisle.filter((c) => byCode[c] && byCode[c].length).length;
+      used += shelfFilled; total += ps.slots.length;
+      const exp = all.some((c) => (byCode[c] || []).some(palletNearExpiry));
+      const cls = shelfFilled === 0 && aisleFilled === 0 && !looseFilled ? 'map-empty' : shelfFilled >= ps.slots.length ? 'map-full' : 'map-part';
+      cells += `<button type="button" class="map-cell ${cls}${exp ? ' map-exp' : ''}${mapSelected === ps.base ? ' map-sel' : ''}" onclick="mapSelect('${escapeHtml(ps.base)}')" title="${escapeHtml(ps.base)}">
+        <b>${pad2(i)}</b><small>${shelfFilled}/${ps.slots.length}${aisleFilled ? ' +' + aisleFilled + 'Δ' : ''}</small>${exp ? '<i>⚠️</i>' : ''}</button>`;
+    }
+    html += `<div class="map-zone"><div class="map-zone-head"><strong>${escapeHtml(z.letter)}</strong> ${escapeHtml(z.name)} <span class="wh-dim">· ${used}/${total} θέσεις ραφιού γεμάτες</span></div><div class="map-cells">${cells}</div></div>`;
+  });
+  if (offMap.length || noLoc.length) {
+    html += `<div class="wh-dim" style="margin-top:.5rem">${offMap.length ? `Παλέτες σε θέσεις εκτός ρυθμίσεων: ${offMap.map((p) => escapeHtml(p.id + ' (' + p.shelf + ')')).join(', ')}. ` : ''}${noLoc.length ? `Χωρίς θέση: ${noLoc.length}.` : ''}</div>`;
+  }
+  host.innerHTML = html || '<span class="wh-dim">Δεν υπάρχουν ζώνες στις ρυθμίσεις.</span>';
+  renderMapDetail(byCode);
+}
+
+function mapSelect(base) { mapSelected = mapSelected === base ? null : base; renderMapTab(); }
+
+function renderMapDetail(byCode) {
+  const el = document.getElementById('mapDetail');
+  if (!el) return;
+  if (!mapSelected) { el.innerHTML = '<span class="wh-dim">Πατήστε σε ένα κουτάκι για να δείτε τι έχει.</span>'; return; }
+  const m = mapSelected.match(/^(.+)-(\d+)$/);
+  const z = m && (appSettings.zones || []).find((x) => x.letter === m[1]);
+  if (!z) { el.innerHTML = ''; return; }
+  const ps = positionSlots(z, parseInt(m[2], 10));
+  const block = (code, label) => {
+    const list = byCode[code] || [];
+    return `<div class="map-slot ${list.length ? '' : 'map-slot-empty'}"><div class="map-slot-head"><strong>${escapeHtml(label)}</strong> <span class="wh-dim">${escapeHtml(code)}</span></div>
+      ${list.length ? list.map((p) => `<div class="map-pal${palletNearExpiry(p) ? ' map-pal-exp' : ''}"><strong>📦 ${escapeHtml(p.id)}</strong> <span class="wh-dim">${escapeHtml(p.customer || '')}</span>${palletItemsShortHtml(p)}</div>`).join('') : '<span class="wh-dim">άδειο</span>'}</div>`;
+  };
+  const levelLabel = (k) => z.levels === 1 ? 'Θέση' : k === 1 ? 'Ύψος 1 (πάτωμα)' : `Ύψος ${k}`;
+  el.innerHTML = `<div class="wh-big">📍 ${escapeHtml(ps.base)}</div>
+    ${ps.slots.slice().reverse().map((c, idx) => block(c, levelLabel(ps.slots.length - idx))).join('')}
+    ${ps.loose.filter((c) => byCode[c]).map((c) => block(c, 'Χωρίς ύψος')).join('')}
+    ${ps.aisle.length ? '<h4 style="margin:.6rem 0 .3rem">Μπροστά (διάδρομος)</h4>' + ps.aisle.map((c, k) => block(c, 'Δ' + (k + 1))).join('') : ''}`;
+}

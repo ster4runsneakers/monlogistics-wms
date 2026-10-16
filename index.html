@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set13">
+  <link rel="stylesheet" href="styles.css?v=set14">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -75,7 +75,11 @@
           <span class="nav-label-full">8. Απογραφή</span>
           <span class="nav-label-short">8. Απογρ.</span>
         </button>
-        <!--NAV_MORE-->
+        <button class="nav-tab" onclick="switchTab('tab-map')">
+          <i data-lucide="map" style="width: 18px;"></i>
+          <span class="nav-label-full">9. Χάρτης</span>
+          <span class="nav-label-short">9. Χάρτης</span>
+        </button>
         <button class="nav-tab" onclick="switchTab('tab-settings')">
           <i data-lucide="settings" style="width: 18px;"></i>
           <span class="nav-label-full">6. Ρυθμίσεις</span>
@@ -817,12 +821,22 @@
         <div id="countSummary" style="margin-top:1rem"></div>
       </div>
     </section>
-    <!--SECTIONS_MORE-->
+    <section id="tab-map" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title"><i data-lucide="map" style="color: var(--primary);"></i> Χάρτης αποθήκης</h2>
+        <p class="card-desc">Κάθε κουτάκι είναι μια θέση. <span class="map-leg map-empty">άδεια</span> <span class="map-leg map-part">μισογεμάτη</span> <span class="map-leg map-full">γεμάτη</span> <span class="map-leg map-exp">⚠️ λήγει σύντομα</span></p>
+        <select id="mapZoneSelect" class="form-select" style="max-width:260px;margin-bottom:.75rem" onchange="renderMapTab()"></select>
+        <div class="map-layout">
+          <div id="mapGrid"></div>
+          <div id="mapDetail" class="wh-step"></div>
+        </div>
+      </div>
+    </section>
 
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set13</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set14</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -893,6 +907,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set13"></script>
+  <script src="app.js?v=set14"></script>
 </body>
 </html>
