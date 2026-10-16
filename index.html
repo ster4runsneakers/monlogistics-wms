@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set6">
+  <link rel="stylesheet" href="styles.css?v=set7">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -562,6 +562,11 @@
                 <input type="number" id="setLabelH" class="form-input" min="15" max="297" step="1" inputmode="numeric">
               </div>
             </div>
+            <div class="form-group">
+              <label class="form-label" for="setSafeMargin">Περιθώριο ασφαλείας (mm)</label>
+              <input type="number" id="setSafeMargin" class="form-input" min="0" max="10" step="0.5" inputmode="decimal" value="3">
+              <div class="form-hint" style="font-size:12px;color:#777">Κενό γύρω-γύρω στις ετικέτες DYMO/θερμικές ώστε να μη κόβεται το QR (DYMO: +1,5 mm πάνω/κάτω). Αν κόβεται ακόμα, αύξησέ το.</div>
+            </div>
             <label class="aisle-tags-check settings-check" for="setShowCompanyOnLabels">
               <input type="checkbox" id="setShowCompanyOnLabels">
               <span>Όνομα εταιρείας πάνω στις ετικέτες (όπου χωράει)</span>
@@ -748,7 +753,7 @@
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set6</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set7</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -819,6 +824,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set6"></script>
+  <script src="app.js?v=set7"></script>
 </body>
 </html>

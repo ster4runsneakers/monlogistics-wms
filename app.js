@@ -1,4 +1,4 @@
-const APP_VERSION = 'set6';
+const APP_VERSION = 'set7';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -4048,7 +4048,8 @@ function normalizeSettings(raw) {
     width: preset === 'custom' ? clampInt(pr.width, 20, 210, 70) : base.w,
     height: preset === 'custom' ? clampInt(pr.height, 15, 297, 42) : base.h,
     showCompany: pr.showCompany !== false,
-    orient: pr.orient === 'portrait' ? 'portrait' : 'landscape'
+    orient: pr.orient === 'portrait' ? 'portrait' : 'landscape',
+    safeMargin: (() => { const v = parseFloat(pr.safeMargin); return isFinite(v) ? Math.max(0, Math.min(10, v)) : 3; })()
   };
   let zones = Array.isArray(r.zones) ? r.zones : d.zones;
   zones = zones.map((z) => ({
@@ -4370,6 +4371,7 @@ function printerFromForm() {
   const o = getVal('setDymoOrient'); if (o) p.orient = o === 'portrait' ? 'portrait' : 'landscape';
   const sc = document.getElementById('setShowCompanyOnLabels'); if (sc) p.showCompany = sc.checked;
   const pr = getVal('setLabelPreset'); if (pr) p.labelPreset = pr;
+  const sm = parseFloat(getVal('setSafeMargin')); if (isFinite(sm)) p.safeMargin = Math.max(0, Math.min(10, sm));
   return p;
 }
 
@@ -4384,7 +4386,8 @@ function singleLabelPageGeometry(p) {
 }
 
 function singleLabelInnerHtml(sp, qrUrl, boxW, boxH, layout, company) {
-  const pad = Math.max(1.5, Math.min(3, Math.min(boxW, boxH) * 0.05));
+  // v=set7: outer safe margin is applied by the caller; here only a small gap
+  const pad = Math.max(0.8, Math.min(1.5, Math.min(boxW, boxH) * 0.04));
   const e = escapeHtml;
   if (layout === 'row') {
     const qr = Math.min(boxH - pad * 2, boxW * 0.5);
@@ -4425,15 +4428,20 @@ async function buildSingleLabelDoc(specs, p) {
   const company = p.showCompany && c.name ? c.name : '';
   const urls = await Promise.all(specs.map((sp) => qrDataUrl(sp.qr, 400)));
   const U = (h) => h.replace(/(-?\d+(?:\.\d+)?)mm/g, 'calc(var(--u) * $1)');
+  // v=set7: safe margin inside the label (DYMO/thermal printable area is smaller than the label).
+  // DYMO paper is portrait; the feed edges (top/bottom of the page) get +1.5mm extra.
+  const m = (() => { const v = parseFloat(p.safeMargin); return isFinite(v) ? Math.max(0, Math.min(10, v)) : 3; })();
+  const mx = Math.min(m, pw * 0.25), my = Math.min(m + (p.type === 'dymo' && m > 0 ? 1.5 : 0), ph * 0.25);
+  const cw = pw - 2 * mx, ch = ph - 2 * my;
   const pages = specs.map((sp, i) => {
     let inner;
     if (mode === 'rot') {
-      // Landscape content (ph × pw) rotated 90° to fill the portrait page
-      inner = `<div style="position:absolute;top:0;left:0;width:${ph}mm;height:${pw}mm;transform-origin:0 0;transform:translateX(${pw}mm) rotate(90deg)">${singleLabelInnerHtml(sp, urls[i], ph, pw, 'row', company)}</div>`;
+      // Landscape content (ch × cw) rotated 90° to fill the portrait content area
+      inner = `<div style="position:absolute;top:0;left:0;width:${ch}mm;height:${cw}mm;transform-origin:0 0;transform:translateX(${cw}mm) rotate(90deg)">${singleLabelInnerHtml(sp, urls[i], ch, cw, 'row', company)}</div>`;
     } else {
-      inner = singleLabelInnerHtml(sp, urls[i], pw, ph, mode, company);
+      inner = singleLabelInnerHtml(sp, urls[i], cw, ch, mode, company);
     }
-    return `<div class="pg"><div class="box">${U(inner)}</div></div>`;
+    return `<div class="pg"><div class="box">${U(`<div class="safe" style="position:absolute;left:${mx}mm;top:${my}mm;width:${cw}mm;height:${ch}mm;overflow:hidden">${inner}</div>`)}</div></div>`;
   }).join('');
   // v=set4+: all sizes are relative to the page Chrome/driver actually gives (100vw × 100vh),
   // so content fills the paper even if Chrome ignores @page size.
@@ -4538,7 +4546,7 @@ function printTestLabel() {
   const z = (appSettings.zones || [])[1] || (appSettings.zones || [])[0];
   const code = z ? zoneLocationCodes(z)[Math.min(13, zoneLocationCodes(z).length - 1)] : 'Β-07-2';
   const p = printerFromForm();
-  showToast(`Δοκιμή ${APP_VERSION}: ${p.type} ${p.width}×${p.height} ${p.orient || ''}`, 'success');
+  showToast(`Δοκιμή ${APP_VERSION}: ${p.type} ${p.width}×${p.height} ${p.orient || ''} περιθ. ${p.safeMargin == null ? 3 : p.safeMargin}mm`, 'success');
   printLabelsSized([locationCodeToLabelSpec(code)], p);
 }
 
@@ -4613,6 +4621,7 @@ function renderSettingsForm() {
   setVal('setLabelW', s.printer.width);
   setVal('setLabelH', s.printer.height);
   setVal('setDymoOrient', s.printer.orient);
+  setVal('setSafeMargin', s.printer.safeMargin == null ? 3 : s.printer.safeMargin);
   const sc = document.getElementById('setShowCompanyOnLabels');
   if (sc) sc.checked = !!s.printer.showCompany;
   setVal('setCompanyName', s.company.name);
@@ -4683,7 +4692,7 @@ function refreshSettingsDerived() {
   if (hint) {
     if (isDymo) {
       const pn = (LABEL_PRESETS[preset] && LABEL_PRESETS[preset].name) || `${h}×${w} mm`;
-      hint.textContent = `DYMO: μία ετικέτα ανά σελίδα (${pn}). Στο παράθυρο εκτύπωσης διάλεξε τον DYMO LabelWriter, Κλίμακα 100% / «Πραγματικό μέγεθος», Περιθώρια: Κανένα. Στις «Ρυθμίσεις εκτυπωτή» του οδηγού βάλε χαρτί ${pn.replace(/^DYMO /, '')}. ` + (orient === 'landscape' ? 'Αν βγει στραβά/κομμένη, άλλαξε τον Προσανατολισμό σε «Όρθιο».' : 'Αν βγει κομμένη, δοκίμασε Προσανατολισμό «Οριζόντιο».');
+      hint.textContent = `ΣΗΜΑΝΤΙΚΟ: στο παράθυρο εκτύπωσης → Μέγεθος χαρτιού διάλεξε «${pn.replace(/^DYMO /, '').split(' ')[0]}» (${Math.min(w,h)}×${Math.max(w,h)} mm), ίδιο με τις ετικέτες που έχει μέσα ο εκτυπωτής — όχι άλλο μέγεθος. DYMO: μία ετικέτα ανά σελίδα (${pn}). Στο παράθυρο εκτύπωσης διάλεξε τον DYMO LabelWriter, Κλίμακα 100% / «Πραγματικό μέγεθος», Περιθώρια: Κανένα. Στις «Ρυθμίσεις εκτυπωτή» του οδηγού βάλε χαρτί ${pn.replace(/^DYMO /, '')}. ` + (orient === 'landscape' ? 'Αν βγει στραβά/κομμένη, άλλαξε τον Προσανατολισμό σε «Όρθιο».' : 'Αν βγει κομμένη, δοκίμασε Προσανατολισμό «Οριζόντιο».');
     } else if (preset === '70x42' && type !== 'thermal') hint.textContent = 'Τυπώνει σε φύλλα A4 με 21 αυτοκόλλητα (3×7). Στο παράθυρο εκτύπωσης: Κλίμακα 100% / «Πραγματικό μέγεθος», χωρίς περιθώρια.';
     else if (type === 'a4') hint.textContent = `Τυπώνει πολλές ετικέτες ${w}×${h} mm σε κάθε A4 με γραμμές κοπής.`;
     else hint.textContent = `Κάθε ετικέτα ${w}×${h} mm τυπώνεται σε δική της σελίδα. Στον οδηγό του εκτυπωτή διάλεξε το ίδιο χαρτί ${w}×${h} mm.`;
@@ -4763,7 +4772,8 @@ function saveSettingsFromForm() {
       width: getVal('setLabelW'),
       height: getVal('setLabelH'),
       showCompany: sc ? sc.checked : true,
-      orient: getVal('setDymoOrient')
+      orient: getVal('setDymoOrient'),
+      safeMargin: getVal('setSafeMargin')
     },
     zones: draftZones || [],
     company: {
