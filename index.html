@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set1">
+  <link rel="stylesheet" href="styles.css?v=set2">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -513,6 +513,7 @@
               <label class="form-label" for="setPrinterType">Τύπος εκτυπωτή</label>
               <select id="setPrinterType" class="form-select">
                 <option value="a4">A4 εκτυπωτής γραφείου (laser / inkjet)</option>
+                <option value="dymo">DYMO LabelWriter (450 / 450 Turbo / Twin Turbo / Duo / 550)</option>
                 <option value="thermal">Θερμικός ετικετών (Zebra, Brother QL, Niimbot, Phomemo…)</option>
                 <option value="other">Άλλο</option>
               </select>
@@ -523,6 +524,7 @@
               <datalist id="printerModelList">
                 <option value="HP LaserJet"><option value="Canon PIXMA"><option value="Epson EcoTank">
                 <option value="Zebra ZD420"><option value="Zebra GK420d"><option value="Brother QL-800"><option value="Brother QL-820NWB">
+                <option value="DYMO LabelWriter 450"><option value="DYMO LabelWriter 450 Turbo"><option value="DYMO LabelWriter 450 Twin Turbo"><option value="DYMO LabelWriter 450 Duo"><option value="DYMO LabelWriter 550"><option value="DYMO LabelWriter 550 Turbo">
                 <option value="Niimbot B1"><option value="Niimbot B21"><option value="Phomemo M110"><option value="Phomemo M220">
               </datalist>
             </div>
@@ -534,7 +536,22 @@
                 <option value="50x30">50×30 mm</option>
                 <option value="62x29">62×29 mm (Brother DK)</option>
                 <option value="40x30">40×30 mm</option>
+                <option value="dymo-99014">DYMO 99014 — 54×101 mm Αποστολής (προτείνεται)</option>
+                <option value="dymo-99012">DYMO 99012 — 36×89 mm Μεγάλη διεύθυνση</option>
+                <option value="dymo-99010">DYMO 99010 — 28×89 mm Διεύθυνση</option>
+                <option value="dymo-11354">DYMO 11354 — 32×57 mm Πολλαπλών χρήσεων</option>
+                <option value="dymo-S0722430">DYMO S0722430 — 32×57 mm Πολλαπλών χρήσεων</option>
+                <option value="dymo-11352">DYMO 11352 — 25×54 mm Επιστροφής</option>
+                <option value="dymo-11355">DYMO 11355 — 19×51 mm Πολλαπλών χρήσεων</option>
+                <option value="dymo-99017">DYMO 99017 — 12×50 mm Φακέλων (πολύ μικρή)</option>
                 <option value="custom">Προσαρμοσμένο…</option>
+              </select>
+            </div>
+            <div class="form-group dymo-only" style="display:none">
+              <label class="form-label" for="setDymoOrient">Προσανατολισμός DYMO</label>
+              <select id="setDymoOrient" class="form-select">
+                <option value="landscape">Οριζόντιο (προεπιλογή — σελίδα μήκος×πλάτος)</option>
+                <option value="portrait">Όρθιο (σελίδα πλάτος×μήκος, περιστραμμένο)</option>
               </select>
             </div>
             <div class="form-group settings-custom-size">
@@ -801,6 +818,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set1"></script>
+  <script src="app.js?v=set2"></script>
 </body>
 </html>

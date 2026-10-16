@@ -3989,8 +3989,18 @@ const LABEL_PRESETS = {
   '100x50': { w: 100, h: 50 },
   '50x30': { w: 50, h: 30 },
   '62x29': { w: 62, h: 29 },
-  '40x30': { w: 40, h: 30 }
+  '40x30': { w: 40, h: 30 },
+  // DYMO LabelWriter (w = label length along feed, h = label width across head; max print width ~56mm)
+  'dymo-99014': { w: 101, h: 54, dymo: true, name: 'DYMO 99014 Shipping / Name badge 54×101' },
+  'dymo-99012': { w: 89, h: 36, dymo: true, name: 'DYMO 99012 Large Address 36×89' },
+  'dymo-99010': { w: 89, h: 28, dymo: true, name: 'DYMO 99010 Standard Address 28×89' },
+  'dymo-11354': { w: 57, h: 32, dymo: true, name: 'DYMO 11354 Multi-purpose 32×57' },
+  'dymo-11352': { w: 54, h: 25, dymo: true, name: 'DYMO 11352 Return Address 25×54' },
+  'dymo-11355': { w: 51, h: 19, dymo: true, name: 'DYMO 11355 Multi-purpose 19×51' },
+  'dymo-S0722430': { w: 57, h: 32, dymo: true, name: 'DYMO S0722430 Multi-purpose 32×57' },
+  'dymo-99017': { w: 50, h: 12, dymo: true, name: 'DYMO 99017 Suspension file 12×50' }
 };
+const DYMO_DEFAULT_PRESET = 'dymo-99014';
 
 function defaultZones() {
   return [
@@ -4031,12 +4041,13 @@ function normalizeSettings(raw) {
   const preset = (pr.labelPreset === 'custom' || LABEL_PRESETS[pr.labelPreset]) ? pr.labelPreset : d.printer.labelPreset;
   const base = LABEL_PRESETS[preset] || {};
   const printer = {
-    type: ['a4', 'thermal', 'other'].includes(pr.type) ? pr.type : d.printer.type,
+    type: ['a4', 'thermal', 'dymo', 'other'].includes(pr.type) ? pr.type : d.printer.type,
     model: String(pr.model || '').slice(0, 80),
     labelPreset: preset,
     width: preset === 'custom' ? clampInt(pr.width, 20, 210, 70) : base.w,
     height: preset === 'custom' ? clampInt(pr.height, 15, 297, 42) : base.h,
-    showCompany: pr.showCompany !== false
+    showCompany: pr.showCompany !== false,
+    orient: pr.orient === 'portrait' ? 'portrait' : 'landscape'
   };
   let zones = Array.isArray(r.zones) ? r.zones : d.zones;
   zones = zones.map((z) => ({
@@ -4172,7 +4183,9 @@ function describeLocationCode(code) {
 /* ---------- Sized label printing ---------- */
 function getLabelSize() {
   const p = appSettings.printer;
-  return { w: p.width, h: p.height, sheet: p.labelPreset === '70x42' && p.type !== 'thermal' };
+  const thermalLike = p.type === 'thermal' || p.type === 'dymo';
+  return { w: p.width, h: p.height, sheet: p.labelPreset === '70x42' && !thermalLike,
+    rotate: p.type === 'dymo' && p.orient === 'portrait' };
 }
 
 function locationCodeToLabelSpec(code) {
@@ -4229,8 +4242,9 @@ function setPrintPageCss(css) {
 function applyDocumentPrintPage() {
   document.body.classList.add('ml-printing');
   const p = appSettings.printer;
-  if (p.type === 'thermal') {
-    setPrintPageCss(`@media print { @page { size: ${p.width}mm auto; margin: 2mm; } #printArea .print-pick-list { font-size: 8pt; } }`);
+  if (p.type === 'thermal' || p.type === 'dymo') {
+    const pw = p.type === 'dymo' ? Math.min(p.height, 56) : p.width;
+    setPrintPageCss(`@media print { @page { size: ${pw}mm auto; margin: 2mm; } #printArea .print-pick-list { font-size: 8pt; } }`);
   } else {
     setPrintPageCss('@media print { @page { size: A4 portrait; margin: 12mm; } }');
   }
@@ -4293,7 +4307,17 @@ function buildSizedLabels(specs, size) {
       ${(sp.lines || []).slice(0, maxLines).map((l) => `<div class="ml-label-line" style="font-size:${lineFont}mm">${escapeHtml(l)}</div>`).join('')}`;
     el.appendChild(img);
     el.appendChild(txt);
-    root.appendChild(el);
+    if (size.rotate) {
+      // Portrait page (width × length) with landscape content rotated 90°
+      const pg = document.createElement('div');
+      pg.className = 'ml-page ml-page-rot';
+      pg.style.cssText = `position:relative;overflow:hidden;width:${h}mm;height:${w}mm;`;
+      el.style.cssText += `position:absolute;top:0;left:0;transform-origin:0 0;transform:translateX(${h}mm) rotate(90deg);`;
+      pg.appendChild(el);
+      root.appendChild(pg);
+    } else {
+      root.appendChild(el);
+    }
     jobs.push(qrDataUrl(sp.qr, 300).then((url) => new Promise((res) => {
       if (!url) { res(); return; }
       img.onload = img.onerror = () => res();
@@ -4323,12 +4347,15 @@ function labelPrintCss(size) {
       #printArea.ml-labels-mode .ml-label { border: 0.2mm dashed #bbb !important; }
     }`;
   }
-  // Thermal / other: one label per page, page = label size
+  // Thermal / DYMO / other: one label per page, page = label size
+  const pw = size.rotate ? h : w;
+  const ph = size.rotate ? w : h;
   return `@media print {
-    @page { size: ${w}mm ${h}mm; margin: 0; }
+    @page { size: ${pw}mm ${ph}mm; margin: 0; }
     #printArea.ml-labels-mode .ml-label-sheet { display:block !important; }
-    #printArea.ml-labels-mode .ml-label { break-after: page; page-break-after: always; border: none !important; }
-    #printArea.ml-labels-mode .ml-label:last-child { break-after: auto; page-break-after: auto; }
+    #printArea.ml-labels-mode .ml-label-sheet > * { break-after: page; page-break-after: always; }
+    #printArea.ml-labels-mode .ml-label-sheet > *:last-child { break-after: auto; page-break-after: auto; }
+    #printArea.ml-labels-mode .ml-label { border: none !important; }
   }`;
 }
 
@@ -4397,6 +4424,18 @@ function initSettingsUI() {
       const pr = LABEL_PRESETS[e.target.value];
       if (pr) { setVal('setLabelW', pr.w); setVal('setLabelH', pr.h); }
     }
+    if (e.target && e.target.id === 'setPrinterType') {
+      const cur = getVal('setLabelPreset');
+      const isDymo = e.target.value === 'dymo';
+      const curDymo = !!(LABEL_PRESETS[cur] && LABEL_PRESETS[cur].dymo);
+      if (isDymo && !curDymo) {
+        setVal('setLabelPreset', DYMO_DEFAULT_PRESET);
+        const d = LABEL_PRESETS[DYMO_DEFAULT_PRESET]; setVal('setLabelW', d.w); setVal('setLabelH', d.h);
+        if (!getVal('setPrinterModel')) setVal('setPrinterModel', 'DYMO LabelWriter 450');
+      } else if (!isDymo && curDymo) {
+        setVal('setLabelPreset', '70x42'); setVal('setLabelW', 70); setVal('setLabelH', 42);
+      }
+    }
     if (e.target && e.target.id === 'setCompanyLogoFile') handleLogoFile(e.target);
     refreshSettingsDerived();
   });
@@ -4439,6 +4478,7 @@ function renderSettingsForm() {
   setVal('setLabelPreset', s.printer.labelPreset);
   setVal('setLabelW', s.printer.width);
   setVal('setLabelH', s.printer.height);
+  setVal('setDymoOrient', s.printer.orient);
   const sc = document.getElementById('setShowCompanyOnLabels');
   if (sc) sc.checked = !!s.printer.showCompany;
   setVal('setCompanyName', s.company.name);
@@ -4498,15 +4538,26 @@ function refreshSettingsDerived() {
   const hint = document.getElementById('printModeHint');
   const w = clampInt(getVal('setLabelW'), 20, 210, 70);
   const h = clampInt(getVal('setLabelH'), 15, 297, 42);
+  const orient = getVal('setDymoOrient') === 'portrait' ? 'portrait' : 'landscape';
+  const isDymo = type === 'dymo';
+  document.querySelectorAll('.dymo-only').forEach((el) => { el.style.display = isDymo ? '' : 'none'; });
+  const sel = document.getElementById('setLabelPreset');
+  if (sel) sel.querySelectorAll('option').forEach((o) => {
+    const d = !!(LABEL_PRESETS[o.value] && LABEL_PRESETS[o.value].dymo);
+    o.hidden = o.value !== 'custom' && (isDymo ? !d : d);
+  });
   if (hint) {
-    if (preset === '70x42' && type !== 'thermal') hint.textContent = 'Τυπώνει σε φύλλα A4 με 21 αυτοκόλλητα (3×7). Στο παράθυρο εκτύπωσης: Κλίμακα 100% / «Πραγματικό μέγεθος», χωρίς περιθώρια.';
+    if (isDymo) {
+      const pn = (LABEL_PRESETS[preset] && LABEL_PRESETS[preset].name) || `${h}×${w} mm`;
+      hint.textContent = `DYMO: μία ετικέτα ανά σελίδα (${pn}). Στο παράθυρο εκτύπωσης διάλεξε τον DYMO LabelWriter, Κλίμακα 100% / «Πραγματικό μέγεθος», Περιθώρια: Κανένα. Στις «Ρυθμίσεις εκτυπωτή» του οδηγού βάλε χαρτί ${pn.replace(/^DYMO /, '')}. ` + (orient === 'landscape' ? 'Αν βγει στραβά/κομμένη, άλλαξε τον Προσανατολισμό σε «Όρθιο».' : 'Αν βγει κομμένη, δοκίμασε Προσανατολισμό «Οριζόντιο».');
+    } else if (preset === '70x42' && type !== 'thermal') hint.textContent = 'Τυπώνει σε φύλλα A4 με 21 αυτοκόλλητα (3×7). Στο παράθυρο εκτύπωσης: Κλίμακα 100% / «Πραγματικό μέγεθος», χωρίς περιθώρια.';
     else if (type === 'a4') hint.textContent = `Τυπώνει πολλές ετικέτες ${w}×${h} mm σε κάθε A4 με γραμμές κοπής.`;
     else hint.textContent = `Κάθε ετικέτα ${w}×${h} mm τυπώνεται σε δική της σελίδα. Στον οδηγό του εκτυπωτή διάλεξε το ίδιο χαρτί ${w}×${h} mm.`;
   }
   // Preview
   const box = document.getElementById('labelPreviewBox');
   if (box && settingsPreviewSize !== `${w}x${h}`) {
-    settingsPreviewSize = `${w}x${h}`;
+    settingsPreviewSize = `${w}x${h}`;  // preview always landscape (how it reads on the label)
     const { root } = buildSizedLabels([locationCodeToLabelSpec('Β-07-2')], { w, h });
     box.innerHTML = '';
     box.appendChild(root);
@@ -4577,7 +4628,8 @@ function saveSettingsFromForm() {
       labelPreset: getVal('setLabelPreset'),
       width: getVal('setLabelW'),
       height: getVal('setLabelH'),
-      showCompany: sc ? sc.checked : true
+      showCompany: sc ? sc.checked : true,
+      orient: getVal('setDymoOrient')
     },
     zones: draftZones || [],
     company: {
