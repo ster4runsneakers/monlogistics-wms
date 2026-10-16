@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set18">
+  <link rel="stylesheet" href="styles.css?v=set19">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -81,6 +81,11 @@
           <i data-lucide="map" style="width: 18px;"></i>
           <span class="nav-label-full">9. Χάρτης</span>
           <span class="nav-label-short">9. Χάρτης</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-billing')">
+          <i data-lucide="euro" style="width: 18px;"></i>
+          <span class="nav-label-full">10. Χρέωση</span>
+          <span class="nav-label-short">10. Χρέωση</span>
         </button>
         <button class="nav-tab" onclick="switchTab('tab-settings')">
           <i data-lucide="settings" style="width: 18px;"></i>
@@ -635,6 +640,17 @@
         </details>
 
         <details class="settings-section">
+          <summary>💶 Τιμές αποθήκευσης (χρέωση)</summary>
+          <div class="form-group" style="max-width:260px">
+            <label class="form-label" for="billDefaultPrice">Βασική τιμή € ανά παλέτα / ημέρα</label>
+            <input type="number" id="billDefaultPrice" class="form-input" min="0" step="0.01" inputmode="decimal">
+          </div>
+          <p class="settings-hint">Ειδική τιμή ανά πελάτη (άφησέ το κενό για τη βασική):</p>
+          <div id="billPriceList"></div>
+          <button type="button" class="btn btn-primary btn-sm" style="margin-top:.5rem" onclick="saveBillingPrices()">💾 Αποθήκευση τιμών</button>
+        </details>
+
+        <details class="settings-section">
           <summary>⏰ Ειδοποίηση λήξης</summary>
           <div class="form-group" style="max-width: 260px;">
             <label class="form-label" for="setExpiryDays">Μέρες πριν τη λήξη για ειδοποίηση «Λήγει»</label>
@@ -841,10 +857,29 @@
       </div>
     </section>
 
+    <section id="tab-billing" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title"><i data-lucide="euro" style="color: var(--primary);"></i> Χρέωση αποθήκευσης</h2>
+        <p class="card-desc">Διάλεξε περίοδο. Για κάθε παλέτα μετράμε τις μέρες από την είσοδο μέχρι την έξοδο (ή μέχρι το «Έως») × την τιμή του πελάτη. Πάτα σε έναν πελάτη για να δεις τις παλέτες του.</p>
+        <div class="wh-row" style="flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem">
+          <label>Από <input type="date" id="billFrom" class="form-input" onchange="computeBilling()"></label>
+          <label>Έως <input type="date" id="billTo" class="form-input" onchange="computeBilling()"></label>
+          <select id="billClient" class="form-select" style="max-width:240px" onchange="computeBilling()"></select>
+        </div>
+        <div class="wh-row" style="flex-wrap:wrap;gap:.5rem;margin-bottom:.75rem">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="exportBillingXlsx()">📊 Excel</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="exportBillingCsv()">📄 CSV</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="printBilling()">🖨️ Εκτύπωση</button>
+        </div>
+        <div id="billResult"></div>
+        <p class="settings-hint" style="margin-top:.75rem">Οι τιμές ορίζονται στις <strong>Ρυθμίσεις → 💶 Τιμές αποθήκευσης</strong>.</p>
+      </div>
+    </section>
+
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set18</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set19</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -915,6 +950,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set18"></script>
+  <script src="app.js?v=set19"></script>
 </body>
 </html>

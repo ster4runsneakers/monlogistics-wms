@@ -1,4 +1,4 @@
-const APP_VERSION = 'set18';
+const APP_VERSION = 'set19';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -99,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
   generateShelfGrid();
   initPickTabUI();
   initSettingsUI();
+  loadBilling();
 
   // Delegated inventory table actions (avoid inline onclick XSS)
   bindInventoryTableActions();
@@ -423,6 +424,8 @@ function switchTab(tabId) {
   if (tabId === 'tab-move') renderMoveTab();
   if (tabId === 'tab-count') renderCountTab();
   if (tabId === 'tab-map') renderMapTab();
+  if (tabId === 'tab-billing') initBillingTab();
+  if (tabId === 'tab-settings') try { renderBillingPrices(); } catch (e) { /* */ }
 
   // Re-create icons for freshly visible tab elements
   if (window.lucide) {
@@ -5384,6 +5387,7 @@ function selectWarehouse(id) {
   settingsFormDirty = false;
   loadSettingsFromStorage();
   if (cloudEnabled && db) subscribeSettings();
+  try { loadBilling(); } catch (e) { console.error(e); }
   try { loadCountState(); } catch (e) { /* */ }
   renderWarehouseUI();
   try { onSettingsChanged(false); } catch (e) { console.error(e); }
@@ -5441,4 +5445,168 @@ function deleteWarehouse(id) {
   saveWarehouseList();
   if (currentWh === id) selectWarehouse('w1');
   showToast('Η αποθήκη διαγράφηκε', 'success');
+}
+
+/* ==========================================================================
+   set19: ΧΡΕΩΣΗ ΑΠΟΘΗΚΕΥΣΗΣ (ανά αποθήκη)
+   ========================================================================== */
+const BILLING_KEY = 'monlog_billing_v1';
+let billing = { defaultPrice: 0, clients: {} };
+let billingUnsub = null;
+let billingRows = [];
+function billingDocId() { return 'billing_' + currentWh; }
+function billingLocalKey() { return BILLING_KEY + '_' + currentWh; }
+function normalizeBilling(r) {
+  r = r && typeof r === 'object' ? r : {};
+  const clients = {};
+  if (r.clients && typeof r.clients === 'object') Object.keys(r.clients).forEach((k) => {
+    const v = parseFloat(r.clients[k]); if (k.trim() && isFinite(v) && v >= 0) clients[k.trim()] = v;
+  });
+  const d = parseFloat(r.defaultPrice);
+  return { defaultPrice: isFinite(d) && d >= 0 ? d : 0, clients };
+}
+function loadBilling() {
+  try { billing = normalizeBilling(JSON.parse(localStorage.getItem(billingLocalKey()) || 'null')); } catch (e) { billing = normalizeBilling(null); }
+  if (billingUnsub) { try { billingUnsub(); } catch (e) { /* */ } billingUnsub = null; }
+  if (cloudEnabled && db) {
+    const wh = currentWh;
+    billingUnsub = db.collection('settings').doc(billingDocId()).onSnapshot((s) => {
+      if (wh !== currentWh) return;
+      if (s.exists) { billing = normalizeBilling(s.data()); try { localStorage.setItem(billingLocalKey(), JSON.stringify(billing)); } catch (e) { /* */ } }
+      renderBillingPrices();
+    }, (err) => console.error('Billing snapshot error:', err));
+  }
+  renderBillingPrices();
+}
+function billingClientNames() {
+  const s = new Set();
+  pallets.forEach((p) => { if (p.customer) s.add(String(p.customer).trim()); });
+  Object.keys(billing.clients).forEach((k) => s.add(k));
+  return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b, 'el'));
+}
+function priceForClient(c) { return Object.prototype.hasOwnProperty.call(billing.clients, c) ? billing.clients[c] : billing.defaultPrice; }
+function renderBillingPrices() {
+  const host = document.getElementById('billPriceList');
+  if (!host) return;
+  setVal('billDefaultPrice', billing.defaultPrice);
+  host.innerHTML = billingClientNames().map((c) => {
+    const has = Object.prototype.hasOwnProperty.call(billing.clients, c);
+    return `<div class="bill-price-row"><span>${escapeHtml(c)}</span>
+      <input type="number" class="form-input bill-client-price" data-client="${escapeHtml(c)}" min="0" step="0.01" inputmode="decimal" placeholder="${escapeHtml(String(billing.defaultPrice))} (βασική)" value="${has ? billing.clients[c] : ''}"></div>`;
+  }).join('') || '<span class="wh-dim">Δεν υπάρχουν ακόμα πελάτες σε αυτή την αποθήκη.</span>';
+}
+function saveBillingPrices() {
+  const d = parseFloat(String(getVal('billDefaultPrice')).replace(',', '.'));
+  const clients = {};
+  document.querySelectorAll('.bill-client-price').forEach((el) => {
+    const v = parseFloat(String(el.value).replace(',', '.'));
+    if (el.value !== '' && isFinite(v) && v >= 0) clients[el.getAttribute('data-client')] = v;
+  });
+  billing = normalizeBilling({ defaultPrice: isFinite(d) ? d : 0, clients });
+  try { localStorage.setItem(billingLocalKey(), JSON.stringify(billing)); } catch (e) { /* */ }
+  if (cloudEnabled && db) {
+    db.collection('settings').doc(billingDocId()).set({ ...billing, updatedAt: new Date().toISOString() })
+      .catch((err) => { console.error(err); showToast('Σφάλμα cloud στις τιμές', 'error'); });
+  }
+  renderBillingPrices();
+  showToast('Οι τιμές αποθηκεύτηκαν', 'success');
+}
+function ymdOf(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function dayNum(ymd) { const [y, m, d] = ymd.split('-').map(Number); return Math.round(Date.UTC(y, m - 1, d) / 864e5); }
+function isoToYmd(iso) { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : ymdOf(d); }
+function fmtYmd(ymd) { if (!ymd) return ''; const [y, m, d] = ymd.split('-'); return `${d}/${m}/${y}`; }
+function money(n) { return (Math.round(n * 100) / 100).toFixed(2).replace('.', ','); }
+function initBillingTab() {
+  const now = new Date();
+  if (!getVal('billFrom')) setVal('billFrom', ymdOf(new Date(now.getFullYear(), now.getMonth(), 1)));
+  if (!getVal('billTo')) setVal('billTo', ymdOf(now));
+  const sel = document.getElementById('billClient');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Όλοι οι πελάτες</option>' + billingClientNames().map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    sel.value = cur;
+  }
+  renderBillingPrices();
+  computeBilling();
+}
+/** Days are counted inclusive: entry day and exit day both count. */
+function computeBilling() {
+  const from = getVal('billFrom'), to = getVal('billTo');
+  const only = getVal('billClient');
+  const host = document.getElementById('billResult');
+  billingRows = [];
+  if (!host) return;
+  if (!from || !to || from > to) { host.innerHTML = '<span class="wh-dim">Διάλεξε σωστές ημερομηνίες (Από ≤ Έως).</span>'; return; }
+  const f = dayNum(from), t = dayNum(to);
+  const byClient = {};
+  pallets.forEach((p) => {
+    const c = String(p.customer || 'Χωρίς πελάτη').trim();
+    if (only && c !== only) return;
+    const inY = isoToYmd(p.createdAt); if (!inY) return;
+    const outY = p.status === 'shipped' ? isoToYmd(p.shippedAt) : '';
+    const s = Math.max(dayNum(inY), f);
+    const e = Math.min(outY ? dayNum(outY) : t, t);
+    if (e < s) return;
+    const days = e - s + 1;
+    const price = priceForClient(c);
+    (byClient[c] = byClient[c] || []).push({ client: c, id: p.id, inY, outY, from: ymdOf(new Date(s * 864e5)), to: ymdOf(new Date(e * 864e5)), days, price, amount: days * price });
+  });
+  const clients = Object.keys(byClient).sort((a, b) => a.localeCompare(b, 'el'));
+  let total = 0;
+  let html = `<div class="bill-sum-head">Περίοδος ${fmtYmd(from)} – ${fmtYmd(to)} · ${escapeHtml(whName(currentWh))}</div>`;
+  html += '<div class="pick-import-table-scroll"><table class="bill-table"><thead><tr><th>Πελάτης</th><th>Παλέτες</th><th>Ημέρες παλέτας</th><th>€/ημέρα</th><th>Ποσό €</th></tr></thead><tbody>';
+  clients.forEach((c) => {
+    const rows = byClient[c];
+    rows.sort((a, b) => a.id.localeCompare(b.id));
+    billingRows.push(...rows);
+    const days = rows.reduce((a, r) => a + r.days, 0), amt = rows.reduce((a, r) => a + r.amount, 0);
+    total += amt;
+    html += `<tr class="bill-client-row" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden"><td><strong>${escapeHtml(c)}</strong> ▾</td><td>${rows.length}</td><td>${days}</td><td>${money(priceForClient(c))}</td><td><strong>${money(amt)}</strong></td></tr>
+      <tr hidden><td colspan="5"><table class="bill-sub"><tr><th>Παλέτα</th><th>Είσοδος</th><th>Έξοδος</th><th>Ημέρες</th><th>€</th></tr>${rows.map((r) => `<tr><td>${escapeHtml(r.id)}</td><td>${fmtYmd(r.inY)}</td><td>${r.outY ? fmtYmd(r.outY) : 'σε απόθεμα'}</td><td>${r.days}</td><td>${money(r.amount)}</td></tr>`).join('')}</table></td></tr>`;
+  });
+  html += `</tbody><tfoot><tr><td><strong>ΣΥΝΟΛΟ</strong></td><td>${billingRows.length}</td><td>${billingRows.reduce((a, r) => a + r.days, 0)}</td><td></td><td><strong>${money(total)}</strong></td></tr></tfoot></table></div>`;
+  host.innerHTML = clients.length ? html : '<span class="wh-dim">Δεν υπάρχουν παλέτες σε αυτή την περίοδο.</span>';
+}
+function billingExportRows() {
+  return [['Πελάτης', 'Παλέτα', 'Είσοδος', 'Έξοδος', 'Χρέωση από', 'Χρέωση έως', 'Ημέρες', '€/ημέρα', 'Ποσό €']]
+    .concat(billingRows.map((r) => [r.client, r.id, fmtYmd(r.inY), r.outY ? fmtYmd(r.outY) : '', fmtYmd(r.from), fmtYmd(r.to), r.days, r.price, Math.round(r.amount * 100) / 100]));
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function exportBillingCsv() {
+  computeBilling();
+  if (!billingRows.length) { showToast('Δεν υπάρχουν δεδομένα', 'error'); return; }
+  const csv = billingExportRows().map((r) => r.map((v) => { const s = String(v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(';')).join('\r\n');
+  downloadBlob(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), `xrewsi_${getVal('billFrom')}_${getVal('billTo')}.csv`);
+}
+function exportBillingXlsx() {
+  computeBilling();
+  if (!billingRows.length) { showToast('Δεν υπάρχουν δεδομένα', 'error'); return; }
+  if (typeof XLSX === 'undefined') { exportBillingCsv(); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(billingExportRows()), 'Χρέωση');
+  XLSX.writeFile(wb, `xrewsi_${getVal('billFrom')}_${getVal('billTo')}.xlsx`);
+}
+function printBilling() {
+  computeBilling();
+  if (!billingRows.length) { showToast('Δεν υπάρχουν δεδομένα', 'error'); return; }
+  const by = {};
+  billingRows.forEach((r) => (by[r.client] = by[r.client] || []).push(r));
+  const body = Object.keys(by).map((c) => {
+    const rows = by[c]; const amt = rows.reduce((a, r) => a + r.amount, 0);
+    return `<h2>${escapeHtml(c)} <small>· €${money(priceForClient(c))}/ημέρα</small></h2><table><tr><th>Παλέτα</th><th>Είσοδος</th><th>Έξοδος</th><th>Ημέρες</th><th>Ποσό €</th></tr>
+      ${rows.map((r) => `<tr><td>${escapeHtml(r.id)}</td><td>${fmtYmd(r.inY)}</td><td>${r.outY ? fmtYmd(r.outY) : '—'}</td><td>${r.days}</td><td>${money(r.amount)}</td></tr>`).join('')}
+      <tr class="t"><td>Σύνολο (${rows.length} παλέτες)</td><td></td><td></td><td>${rows.reduce((a, r) => a + r.days, 0)}</td><td>${money(amt)}</td></tr></table>`;
+  }).join('');
+  const total = billingRows.reduce((a, r) => a + r.amount, 0);
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Χρέωση αποθήκευσης</title><style>
+    @page{size:A4;margin:12mm} body{font-family:Arial,sans-serif;font-size:11px;color:#000}
+    h1{font-size:16px;margin:0 0 4px} h2{font-size:13px;margin:14px 0 4px} table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #999;padding:3px 5px;text-align:left} td:nth-child(n+4){text-align:right} .t td{font-weight:bold;background:#eee}
+  </style></head><body>${typeof companyHeaderHtml === 'function' ? companyHeaderHtml() : ''}
+    <h1>Χρέωση αποθήκευσης — ${escapeHtml(whName(currentWh))}</h1><div>Περίοδος: ${fmtYmd(getVal('billFrom'))} – ${fmtYmd(getVal('billTo'))}</div>
+    ${body}<h2>ΓΕΝΙΚΟ ΣΥΝΟΛΟ: €${money(total)}</h2></body></html>`;
+  printHtmlInIframe(html);
 }

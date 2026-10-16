@@ -2210,3 +2210,15 @@ body {
 .wh-select{background:var(--bg-card,#1e293b);color:inherit;border:1px solid var(--border,#475569);border-radius:8px;padding:.35rem .5rem;font-size:.85rem;max-width:200px;font-weight:600}
 @media (max-width:768px){.wh-select{max-width:none;width:100%;font-size:1rem;padding:.55rem}}
 .wh-select option{background:#1e293b;color:#fff}
+
+/* set19 billing */
+.bill-price-row{display:flex;gap:.5rem;align-items:center;margin:.25rem 0}
+.bill-price-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.bill-price-row input{max-width:150px}
+.bill-table,.bill-sub{width:100%;border-collapse:collapse;font-size:.9rem}
+.bill-table th,.bill-table td,.bill-sub th,.bill-sub td{padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.08);text-align:left}
+.bill-table td:nth-child(n+2){text-align:right}
+.bill-client-row{cursor:pointer}
+.bill-sub{font-size:.8rem;opacity:.9}
+.bill-sum-head{font-weight:600;margin-bottom:.4rem}
+.bill-table tfoot td{border-top:2px solid rgba(255,255,255,.25)}
