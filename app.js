@@ -1,4 +1,4 @@
-const APP_VERSION = 'set11';
+const APP_VERSION = 'set12';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -136,6 +136,7 @@ function palletToFirestoreDoc(p) {
     shippedTo: p.shippedTo || null,
     shippedRef: p.shippedRef || null,
     shippedNote: p.shippedNote || null,
+    ...(Array.isArray(p.history) ? { history: p.history.slice(-50) } : {}),
     updatedAt: new Date().toISOString()
   };
 }
@@ -251,6 +252,7 @@ function subscribePallets() {
     updateStats();
     populateSimulators();
     renderPickTab();
+    refreshWarehouseTabs();
     setSyncStatus("online");
     applyingRemoteSnapshot = false;
   }, (err) => {
@@ -362,6 +364,7 @@ function updateStats() {
    NAVIGATION
    ========================================================================== */
 function switchTab(tabId) {
+  if (typeof scanRouter !== 'undefined' && scanRouter) closeSharedCamera();
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
 
@@ -383,6 +386,9 @@ function switchTab(tabId) {
   if (tabId === 'tab-settings') {
     renderSettingsForm();
   }
+  if (tabId === 'tab-move') renderMoveTab();
+  if (tabId === 'tab-count') renderCountTab();
+  if (tabId === 'tab-map') renderMapTab();
 
   // Re-create icons for freshly visible tab elements
   if (window.lucide) {
@@ -1278,6 +1284,7 @@ function loadImageForDecode(file) {
 
 function onQrScanned(text) {
   console.log('Decoded QR Text:', text);
+  if (scanRouter) { scanRouter(parseScanText(text)); return; }
 
   // Picking scan mode: only accept pallet QR / id
   if (pickScanAwaiting) {
@@ -4810,3 +4817,186 @@ function saveSettingsFromForm() {
   inp.addEventListener('focus', () => { inp.dataset.prev = inp.value; inp.value = ''; });
   inp.addEventListener('blur', () => { if (!inp.value.trim()) inp.value = inp.dataset.prev || 'Α'; });
 })();
+
+
+/* ==========================================================================
+   SHARED: scan routing + camera re-hosting (set12)
+   ========================================================================== */
+let scanRouter = null;      // fn(parsed) — when set, QR scans go here instead of Link tab
+let camHome = null;         // { parent, next } original place of #cameraScannerContainer
+
+function openSharedCamera(hostId, handler) {
+  const c = document.getElementById('cameraScannerContainer');
+  const host = document.getElementById(hostId);
+  if (!c || !host) return;
+  if (!camHome) camHome = { parent: c.parentNode, next: c.nextSibling };
+  if (scanRouter === handler && isCameraActive) { closeSharedCamera(); return; }
+  host.appendChild(c);
+  scanRouter = handler;
+  startCameraScanner().catch(() => {});
+}
+
+function closeSharedCamera() {
+  stopCameraScanner().catch(() => {});
+  const c = document.getElementById('cameraScannerContainer');
+  if (c && camHome) camHome.parent.insertBefore(c, camHome.next);
+  scanRouter = null;
+}
+
+/** Turn any scanned/typed text into { kind: 'pallet'|'loc'|'unknown', id|code, raw } */
+function parseScanText(text) {
+  const raw = String(text || '').trim();
+  try {
+    const j = JSON.parse(raw);
+    if (j && j.type === 'PALLET' && j.id) return { kind: 'pallet', id: String(j.id).trim(), raw };
+    if (j && j.type === 'AISLE' && j.code && j.row) return { kind: 'loc', code: formatAisleLocationCode(String(j.code).trim(), Number(j.row)), raw };
+    if (j && j.type === 'SHELF' && j.code) return { kind: 'loc', code: String(j.code).trim(), raw };
+  } catch (e) { /* plain */ }
+  if (raw.startsWith('AISLE:')) {
+    const parts = raw.slice(6).split(':');
+    if (parts.length >= 2) return { kind: 'loc', code: formatAisleLocationCode(parts[0].trim(), parseInt(parts[1], 10)), raw };
+    return { kind: 'loc', code: parts[0].trim(), raw };
+  }
+  if (raw.startsWith('SHELF:')) return { kind: 'loc', code: raw.slice(6).trim(), raw };
+  if (raw.startsWith('PALLET:')) return { kind: 'pallet', id: raw.slice(7).trim(), raw };
+  if (pallets.some((p) => p.id === raw)) return { kind: 'pallet', id: raw, raw };
+  const up = raw.toUpperCase();
+  if (allConfiguredLocationCodes().includes(up)) return { kind: 'loc', code: up, raw };
+  if (allConfiguredLocationCodes().includes(raw)) return { kind: 'loc', code: raw, raw };
+  return { kind: 'unknown', raw };
+}
+
+function findPalletLoose(id) {
+  const s = String(id || '').trim();
+  return pallets.find((p) => p.id === s) || pallets.find((p) => p.id.toUpperCase() === s.toUpperCase()) || null;
+}
+
+/** Move a pallet to a location code; records history. Returns true on success. */
+function movePalletTo(p, code, via) {
+  if (!p || !code) return false;
+  const from = p.shelf || null;
+  const aisle = parseAisleLocationCode(code);
+  p.shelf = code;
+  p.locationType = aisle ? 'aisle' : 'shelf';
+  p.aisleRow = aisle ? aisle.row : null;
+  p.pairedAt = new Date().toISOString();
+  if (p.status === 'shipped') {
+    p.status = 'in_stock'; p.shippedAt = null; p.shippedTo = null; p.shippedRef = null; p.shippedNote = null;
+  }
+  if (!Array.isArray(p.history)) p.history = [];
+  p.history.push({ from, to: code, at: new Date().toISOString(), via: via || 'move' });
+  if (p.history.length > 50) p.history = p.history.slice(-50);
+  savePalletsToStorage({ upsertIds: [p.id] });
+  try { renderInventoryTable(); } catch (e) { /* */ }
+  refreshWarehouseTabs();
+  return true;
+}
+
+function refreshWarehouseTabs() {
+  const on = (id) => { const t = document.getElementById(id); return t && t.classList.contains('active'); };
+  try { if (on('tab-move')) renderMoveTab(); } catch (e) { /* */ }
+  try { if (on('tab-count') && typeof renderCountTab === 'function') renderCountTab(); } catch (e) { /* */ }
+  try { if (on('tab-map') && typeof renderMapTab === 'function') renderMapTab(); } catch (e) { /* */ }
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function palletItemsShortHtml(p) {
+  const items = normalizeItems(p.items);
+  if (!items.length) return '<span class="wh-dim">χωρίς προϊόντα</span>';
+  return items.map((it) => {
+    const st = expiryStatus(it.expiry);
+    const b = st === 'expired' ? ' <span class="badge-expiry badge-expired">Ληγμένο</span>' : st === 'soon' ? ' <span class="badge-expiry badge-soon">Λήγει</span>' : '';
+    return `<div class="wh-item">• ${escapeHtml(it.name)}${it.qty != null ? ' × ' + escapeHtml(String(it.qty)) : ''}${it.expiry ? ' <span class="wh-dim">(' + formatExpiryEl(it.expiry) + ')</span>' : ''}${b}</div>`;
+  }).join('');
+}
+
+/* ==========================================================================
+   TAB 7: ΜΕΤΑΦΟΡΑ ΠΑΛΕΤΑΣ (set12)
+   ========================================================================== */
+let movePalletId = null;
+let moveTargetCode = null;
+
+function moveScanHandler(r) {
+  if (r.kind === 'pallet') { moveSelectPallet(r.id); return; }
+  if (r.kind === 'loc') {
+    if (!movePalletId) { showToast('Σκανάρετε πρώτα την παλέτα', 'error'); return; }
+    moveSetTarget(r.code); return;
+  }
+  if (!movePalletId) moveSelectPallet(r.raw); else moveSetTarget(r.raw);
+}
+
+function moveToggleCamera() { openSharedCamera('moveCamHost', moveScanHandler); }
+
+function moveSelectPallet(id) {
+  const p = findPalletLoose(id);
+  if (!p) { showToast(`Δεν βρέθηκε παλέτα «${id}»`, 'error'); return; }
+  if (p.status === 'shipped') showToast('Προσοχή: η παλέτα είναι σημειωμένη ως «έφυγε»', 'error');
+  movePalletId = p.id;
+  moveTargetCode = null;
+  showToast(`Παλέτα ${p.id} — τώρα σκανάρετε τη νέα θέση`, 'success');
+  renderMoveTab();
+}
+
+function moveSetTarget(code) {
+  const c = String(code || '').trim();
+  if (!c) return;
+  const known = allConfiguredLocationCodes();
+  const fixed = known.includes(c) ? c : (known.includes(c.toUpperCase()) ? c.toUpperCase() : c);
+  if (!known.includes(fixed) && !confirm(`Η θέση «${fixed}» δεν υπάρχει στις ρυθμίσεις. Να χρησιμοποιηθεί έτσι κι αλλιώς;`)) return;
+  moveTargetCode = fixed;
+  renderMoveTab();
+}
+
+function moveApplyPalletInput() { const v = getVal('movePalletInput').trim(); if (v) moveSelectPallet(v); }
+function moveApplyLocInput() {
+  if (!movePalletId) { showToast('Διαλέξτε πρώτα παλέτα', 'error'); return; }
+  const v = getVal('moveLocInput').trim(); if (v) moveSetTarget(v);
+}
+
+function moveReset() { movePalletId = null; moveTargetCode = null; setVal('movePalletInput', ''); setVal('moveLocInput', ''); renderMoveTab(); }
+
+function moveConfirm() {
+  const p = findPalletLoose(movePalletId);
+  if (!p || !moveTargetCode) return;
+  if (p.shelf === moveTargetCode) { showToast('Η παλέτα είναι ήδη σε αυτή τη θέση', 'error'); return; }
+  const from = p.shelf || '—';
+  movePalletTo(p, moveTargetCode, 'move');
+  showToast(`✅ ${p.id}: ${from} → ${moveTargetCode}`, 'success');
+  moveReset();
+}
+
+function renderMoveTab() {
+  const dl = document.getElementById('movePalletList');
+  if (dl) dl.innerHTML = pallets.filter(isInStock).map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml((p.customer || '') + ' · ' + (p.shelf || 'χωρίς θέση'))}</option>`).join('');
+  const p = movePalletId ? findPalletLoose(movePalletId) : null;
+  const s1 = document.getElementById('moveStep1');
+  const s2 = document.getElementById('moveStep2');
+  const box = document.getElementById('moveSummary');
+  if (s1) s1.innerHTML = p
+    ? `<div class="wh-big">📦 ${escapeHtml(p.id)}</div><div>${escapeHtml(p.customer || '')}</div><div>Τώρα: <strong>${escapeHtml(p.shelf || 'χωρίς θέση')}</strong></div>${palletItemsShortHtml(p)}`
+    : '<span class="wh-dim">Δεν έχει επιλεγεί παλέτα</span>';
+  if (s2) s2.innerHTML = moveTargetCode ? `<div class="wh-big">📍 ${escapeHtml(moveTargetCode)}</div>` : '<span class="wh-dim">Δεν έχει επιλεγεί θέση</span>';
+  const card2 = document.getElementById('moveStep2Card');
+  if (card2) card2.classList.toggle('wh-disabled', !p);
+  if (box) {
+    box.innerHTML = p && moveTargetCode
+      ? `<div class="wh-move-line">${escapeHtml(p.shelf || '—')} <span>→</span> <strong>${escapeHtml(moveTargetCode)}</strong></div>
+         <button type="button" class="btn btn-emerald" onclick="moveConfirm()">✅ Επιβεβαίωση μεταφοράς</button>`
+      : '';
+  }
+  const rec = document.getElementById('moveRecent');
+  if (rec) {
+    const all = [];
+    pallets.forEach((x) => (x.history || []).forEach((h) => all.push({ id: x.id, ...h })));
+    all.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    rec.innerHTML = all.length
+      ? all.slice(0, 15).map((h) => `<div class="wh-hist"><span class="wh-dim">${fmtDateTime(h.at)}</span> <strong>${escapeHtml(h.id)}</strong> ${escapeHtml(h.from || '—')} → ${escapeHtml(h.to || '—')}${h.via === 'count' ? ' <span class="wh-dim">(απογραφή)</span>' : ''}</div>`).join('')
+      : '<span class="wh-dim">Καμία μεταφορά ακόμα</span>';
+  }
+}

@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set11">
+  <link rel="stylesheet" href="styles.css?v=set12">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -65,6 +65,12 @@
           <span class="nav-label-full">5. Picking</span>
           <span class="nav-label-short">5. Pick</span>
         </button>
+        <button class="nav-tab" onclick="switchTab('tab-move')">
+          <i data-lucide="move" style="width: 18px;"></i>
+          <span class="nav-label-full">7. Μεταφορά</span>
+          <span class="nav-label-short">7. Μεταφ.</span>
+        </button>
+        <!--NAV_MORE-->
         <button class="nav-tab" onclick="switchTab('tab-settings')">
           <i data-lucide="settings" style="width: 18px;"></i>
           <span class="nav-label-full">6. Ρυθμίσεις</span>
@@ -750,10 +756,39 @@
       </div>
     </section>
 
+    <section id="tab-move" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title"><i data-lucide="move" style="color: var(--primary);"></i> Μεταφορά παλέτας</h2>
+        <p class="card-desc">1) Σκανάρετε ή διαλέξτε την παλέτα. 2) Σκανάρετε ή γράψτε τη νέα θέση. 3) Πατήστε Επιβεβαίωση.</p>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
+          <button type="button" class="btn btn-primary btn-sm" onclick="moveToggleCamera()">📷 Κάμερα (σάρωση)</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="moveReset()">↺ Από την αρχή</button>
+        </div>
+        <div id="moveCamHost"></div>
+        <div class="wh-steps">
+          <div class="wh-step">
+            <div class="wh-step-title">1. Παλέτα</div>
+            <div class="wh-row"><input id="movePalletInput" class="form-input" list="movePalletList" placeholder="π.χ. PL-1001"><button type="button" class="btn btn-secondary btn-sm" onclick="moveApplyPalletInput()">OK</button></div>
+            <datalist id="movePalletList"></datalist>
+            <div id="moveStep1" class="wh-step-val"></div>
+          </div>
+          <div class="wh-step" id="moveStep2Card">
+            <div class="wh-step-title">2. Νέα θέση</div>
+            <div class="wh-row"><input id="moveLocInput" class="form-input" list="locationCodesList" placeholder="π.χ. Β-07-2"><button type="button" class="btn btn-secondary btn-sm" onclick="moveApplyLocInput()">OK</button></div>
+            <div id="moveStep2" class="wh-step-val"></div>
+          </div>
+        </div>
+        <div id="moveSummary" class="wh-summary"></div>
+        <h3 class="wh-h3">Τελευταίες μεταφορές</h3>
+        <div id="moveRecent"></div>
+      </div>
+    </section>
+    <!--SECTIONS_MORE-->
+
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set11</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set12</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -824,6 +859,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set11"></script>
+  <script src="app.js?v=set12"></script>
 </body>
 </html>

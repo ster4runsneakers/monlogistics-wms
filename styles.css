@@ -2137,3 +2137,21 @@ body {
   #printArea.ml-labels-mode .ml-label { -webkit-print-color-adjust: exact; print-color-adjust: exact; break-inside: avoid; }
   #printArea.ml-labels-mode .ml-label-qr { max-width: none !important; }
 }
+
+/* ===== set12: warehouse tools (move / count / map) ===== */
+.wh-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.75rem;margin:.5rem 0}
+.wh-step{border:1px solid rgba(148,163,184,.25);border-radius:12px;padding:.75rem;background:rgba(15,23,42,.25)}
+.wh-step-title{font-weight:700;margin-bottom:.5rem}
+.wh-row{display:flex;gap:.5rem;align-items:center}
+.wh-row .form-input{flex:1;min-width:0}
+.wh-step-val{margin-top:.6rem;line-height:1.5}
+.wh-big{font-size:1.25rem;font-weight:800}
+.wh-dim{opacity:.65;font-size:.9em}
+.wh-item{font-size:.9rem}
+.wh-disabled{opacity:.5}
+.wh-summary{margin:.75rem 0;display:flex;flex-direction:column;gap:.5rem;align-items:flex-start}
+.wh-move-line{font-size:1.3rem}
+.wh-move-line span{opacity:.6;margin:0 .4rem}
+.wh-h3{margin:1rem 0 .5rem;font-size:1rem}
+.wh-hist{padding:.3rem 0;border-bottom:1px solid rgba(148,163,184,.15);font-size:.9rem}
+#moveCamHost .scanner-viewport-box,#countCamHost .scanner-viewport-box{margin-bottom:.75rem}
