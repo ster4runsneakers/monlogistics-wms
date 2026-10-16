@@ -1,4 +1,4 @@
-const APP_VERSION = 'set15';
+const APP_VERSION = 'set16';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -5191,7 +5191,7 @@ loadCountState();
 
 
 /* ==========================================================================
-   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set15)
+   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set16)
    ========================================================================== */
 let mapSelected = null; // base code e.g. "Β-07"
 

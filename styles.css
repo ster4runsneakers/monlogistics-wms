@@ -2190,3 +2190,7 @@ body {
 .map-slot-empty{opacity:.6}
 .map-pal{margin-top:.3rem}
 .map-pal-exp{border-left:3px solid #ef4444;padding-left:.4rem}
+
+/* set16: header wraps so cloud/stats stay visible with many tabs */
+.header-container { flex-wrap: wrap; row-gap: 10px; max-width: 100%; }
+.nav-tabs { flex-wrap: wrap; justify-content: center; }
