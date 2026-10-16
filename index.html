@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set19">
+  <link rel="stylesheet" href="styles.css?v=set20">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -81,6 +81,11 @@
           <i data-lucide="map" style="width: 18px;"></i>
           <span class="nav-label-full">9. Χάρτης</span>
           <span class="nav-label-short">9. Χάρτης</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-dash')">
+          <i data-lucide="layout-dashboard" style="width: 18px;"></i>
+          <span class="nav-label-full">11. Πίνακας</span>
+          <span class="nav-label-short">11. Πίνακας</span>
         </button>
         <button class="nav-tab" onclick="switchTab('tab-billing')">
           <i data-lucide="euro" style="width: 18px;"></i>
@@ -857,6 +862,13 @@
       </div>
     </section>
 
+    <section id="tab-dash" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title"><i data-lucide="layout-dashboard" style="color: var(--primary);"></i> Πίνακας γραφείου</h2>
+        <p class="card-desc">Μια ματιά σε όλα: πόσο γεμάτη είναι κάθε αποθήκη, τι μπήκε και τι βγήκε, ποιοι πελάτες έχουν τις περισσότερες παλέτες και τι λήγει.</p>
+        <div id="dashBody"></div>
+      </div>
+    </section>
     <section id="tab-billing" class="tab-content">
       <div class="glass-card">
         <h2 class="card-title"><i data-lucide="euro" style="color: var(--primary);"></i> Χρέωση αποθήκευσης</h2>
@@ -879,7 +891,7 @@
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set19</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set20</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -950,6 +962,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set19"></script>
+  <script src="app.js?v=set20"></script>
 </body>
 </html>

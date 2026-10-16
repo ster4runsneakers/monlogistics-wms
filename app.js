@@ -1,4 +1,4 @@
-const APP_VERSION = 'set19';
+const APP_VERSION = 'set20';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -425,6 +425,7 @@ function switchTab(tabId) {
   if (tabId === 'tab-count') renderCountTab();
   if (tabId === 'tab-map') renderMapTab();
   if (tabId === 'tab-billing') initBillingTab();
+  if (tabId === 'tab-dash') renderDashboard();
   if (tabId === 'tab-settings') try { renderBillingPrices(); } catch (e) { /* */ }
 
   // Re-create icons for freshly visible tab elements
@@ -4952,6 +4953,7 @@ function refreshWarehouseTabs() {
   try { if (on('tab-move')) renderMoveTab(); } catch (e) { /* */ }
   try { if (on('tab-count') && typeof renderCountTab === 'function') renderCountTab(); } catch (e) { /* */ }
   try { if (on('tab-map') && typeof renderMapTab === 'function') renderMapTab(); } catch (e) { /* */ }
+  try { if (on('tab-dash') && typeof renderDashboard === 'function') renderDashboard(true); } catch (e) { /* */ }
 }
 
 function fmtDateTime(iso) {
@@ -5609,4 +5611,77 @@ function printBilling() {
     <h1>Χρέωση αποθήκευσης — ${escapeHtml(whName(currentWh))}</h1><div>Περίοδος: ${fmtYmd(getVal('billFrom'))} – ${fmtYmd(getVal('billTo'))}</div>
     ${body}<h2>ΓΕΝΙΚΟ ΣΥΝΟΛΟ: €${money(total)}</h2></body></html>`;
   printHtmlInIframe(html);
+}
+
+/* ==========================================================================
+   set20: ΠΙΝΑΚΑΣ ΓΡΑΦΕΙΟΥ (dashboard)
+   ========================================================================== */
+const dashZonesCache = {}; // whId -> zones (from cloud settings docs)
+function zonesForWh(id) {
+  if (id === currentWh) return appSettings.zones || [];
+  if (dashZonesCache[id]) return dashZonesCache[id];
+  try {
+    const raw = localStorage.getItem(id === 'w1' ? SETTINGS_KEY : SETTINGS_KEY + '_' + id);
+    return normalizeSettings(raw ? JSON.parse(raw) : null).zones;
+  } catch (e) { return defaultZones(); }
+}
+function fetchDashZones() {
+  if (!cloudEnabled || !db) return;
+  warehouses.forEach((w) => {
+    if (w.id === currentWh || dashZonesCache[w.id]) return;
+    db.collection('settings').doc(w.id === 'w1' ? 'main' : 'wh_' + w.id).get().then((s) => {
+      dashZonesCache[w.id] = normalizeSettings(s.exists ? s.data() : null).zones;
+      renderDashboard(true);
+    }).catch((e) => console.error(e));
+  });
+}
+function weekStart(d) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+function renderDashboard(noFetch) {
+  const host = document.getElementById('dashBody');
+  if (!host) return;
+  if (!noFetch) fetchDashZones();
+  syncAllPallets();
+  // 1) occupancy per warehouse
+  const occ = warehouses.map((w) => {
+    const slots = new Set();
+    zonesForWh(w.id).forEach((z) => zoneLocationCodes(z).forEach((c) => slots.add(c)));
+    const used = new Set();
+    allPallets.forEach((p) => { if (whOf(p) === w.id && isInStock(p) && p.shelf && slots.has(p.shelf)) used.add(p.shelf); });
+    const stock = allPallets.filter((p) => whOf(p) === w.id && isInStock(p)).length;
+    return { w, total: slots.size, used: used.size, stock, pct: slots.size ? Math.round(used.size * 100 / slots.size) : 0 };
+  });
+  const occHtml = occ.map((o) => `<div class="dash-occ${o.w.id === currentWh ? ' dash-cur' : ''}">
+      <div class="dash-occ-head"><strong>🏭 ${escapeHtml(o.w.name)}</strong><span>${o.pct}%</span></div>
+      <div class="dash-bar"><i style="width:${o.pct}%;background:${o.pct >= 90 ? '#ef4444' : o.pct >= 70 ? '#f59e0b' : '#10b981'}"></i></div>
+      <div class="wh-dim">${o.used}/${o.total} θέσεις ραφιού γεμάτες · ${o.stock} παλέτες σε απόθεμα</div></div>`).join('');
+  // 2) in/out per week (last 8 weeks, current warehouse)
+  const ws0 = weekStart(new Date());
+  const weeks = [];
+  for (let i = 7; i >= 0; i--) { const s = new Date(ws0); s.setDate(s.getDate() - 7 * i); weeks.push({ s, e: new Date(s.getTime() + 7 * 864e5), inN: 0, outN: 0 }); }
+  pallets.forEach((p) => {
+    const ci = p.createdAt ? new Date(p.createdAt) : null;
+    const so = p.status === 'shipped' && p.shippedAt ? new Date(p.shippedAt) : null;
+    weeks.forEach((w) => { if (ci && ci >= w.s && ci < w.e) w.inN++; if (so && so >= w.s && so < w.e) w.outN++; });
+  });
+  const mx = Math.max(1, ...weeks.map((w) => Math.max(w.inN, w.outN)));
+  const wkHtml = `<div class="dash-weeks">${weeks.map((w) => `<div class="dash-week" title="${fmtYmd(ymdOf(w.s))}">
+      <div class="dash-cols"><i class="in" style="height:${w.inN * 100 / mx}%"><b>${w.inN || ''}</b></i><i class="out" style="height:${w.outN * 100 / mx}%"><b>${w.outN || ''}</b></i></div>
+      <small>${pad2(w.s.getDate())}/${pad2(w.s.getMonth() + 1)}</small></div>`).join('')}</div>
+      <div class="wh-dim"><span class="dash-dot in"></span> Είσοδοι &nbsp; <span class="dash-dot out"></span> Έξοδοι (ανά εβδομάδα, Δευτέρα–Κυριακή)</div>`;
+  // 3) top clients
+  const cnt = {};
+  pallets.filter(isInStock).forEach((p) => { const c = p.customer || 'Χωρίς πελάτη'; cnt[c] = (cnt[c] || 0) + 1; });
+  const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const tmx = top.length ? top[0][1] : 1;
+  const topHtml = top.length ? top.map(([c, n]) => `<div class="dash-top"><span>${escapeHtml(c)}</span><div class="dash-bar"><i style="width:${n * 100 / tmx}%"></i></div><strong>${n}</strong></div>`).join('') : '<span class="wh-dim">Καμία παλέτα.</span>';
+  // 4) near expiry
+  const expP = pallets.filter((p) => isInStock(p) && palletNearExpiry(p));
+  const expired = pallets.filter((p) => isInStock(p) && normalizeItems(p.items).some((it) => expiryStatus(it.expiry) === 'expired')).length;
+  const expHtml = `<div class="dash-kpis"><div class="dash-kpi"><b>${expP.length}</b><span>παλέτες λήγουν σε ${getExpiryWarnDays()} μέρες ή έληξαν</span></div><div class="dash-kpi red"><b>${expired}</b><span>έχουν ήδη ληγμένα</span></div></div>
+    ${expP.slice(0, 10).map((p) => `<div class="wh-hist"><strong>${escapeHtml(p.id)}</strong> ${escapeHtml(p.customer || '')} <span class="wh-dim">${escapeHtml(p.shelf || 'χωρίς θέση')}</span></div>`).join('')}`;
+  host.innerHTML = `<div class="dash-grid">
+    <div class="dash-card"><h3>📦 Πληρότητα αποθηκών</h3>${occHtml}</div>
+    <div class="dash-card"><h3>🔄 Είσοδοι / Έξοδοι — ${escapeHtml(whName(currentWh))}</h3>${wkHtml}</div>
+    <div class="dash-card"><h3>👥 Πελάτες με τις περισσότερες παλέτες</h3>${topHtml}</div>
+    <div class="dash-card"><h3>⏰ Λήξεις</h3>${expHtml}</div></div>`;
 }
