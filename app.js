@@ -1,4 +1,4 @@
-const APP_VERSION = 'set20';
+const APP_VERSION = 'set21';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -926,6 +926,7 @@ function updateLinkUI() {
 
   // Enable Confirm Button if both steps ready
   btnConfirm.disabled = !(scanStepPallet && scanStepShelf);
+  try { renderSmartLinkBox(); } catch (e) { console.error(e); }
 }
 
 function resetLinkSteps() {
@@ -5038,7 +5039,7 @@ function renderMoveTab() {
   if (s1) s1.innerHTML = p
     ? `<div class="wh-big">📦 ${escapeHtml(p.id)}</div><div>${escapeHtml(p.customer || '')}</div><div>Τώρα: <strong>${escapeHtml(p.shelf || 'χωρίς θέση')}</strong></div>${palletItemsShortHtml(p)}`
     : '<span class="wh-dim">Δεν έχει επιλεγεί παλέτα</span>';
-  if (s2) s2.innerHTML = moveTargetCode ? `<div class="wh-big">📍 ${escapeHtml(moveTargetCode)}</div>` : '<span class="wh-dim">Δεν έχει επιλεγεί θέση</span>';
+  if (s2) s2.innerHTML = moveTargetCode ? `<div class="wh-big">📍 ${escapeHtml(moveTargetCode)}</div>` : '<span class="wh-dim">Δεν έχει επιλεγεί θέση</span>' + (p && typeof suggestLocations === 'function' ? smartLocHtml(suggestLocations(p.id, p.customer), 'moveSetTarget') : '');
   const card2 = document.getElementById('moveStep2Card');
   if (card2) card2.classList.toggle('wh-disabled', !p);
   if (box) {
@@ -5684,4 +5685,50 @@ function renderDashboard(noFetch) {
     <div class="dash-card"><h3>🔄 Είσοδοι / Έξοδοι — ${escapeHtml(whName(currentWh))}</h3>${wkHtml}</div>
     <div class="dash-card"><h3>👥 Πελάτες με τις περισσότερες παλέτες</h3>${topHtml}</div>
     <div class="dash-card"><h3>⏰ Λήξεις</h3>${expHtml}</div></div>`;
+}
+
+/* ==========================================================================
+   set21: ΕΞΥΠΝΗ ΘΕΣΗ — προτάσεις ελεύθερων θέσεων
+   ========================================================================== */
+function parseShelfSlot(code) {
+  const m = String(code || '').match(/^(.+?)-(\d+)(?:-(\d+))?(?:-Δ\d)?$/);
+  return m ? { zone: m[1], pos: parseInt(m[2], 10), level: m[3] ? parseInt(m[3], 10) : 1 } : null;
+}
+/** Free shelf slots ranked: near same product, then same client; floor (level 1) preferred, then lowest level. */
+function suggestLocations(palletId, customer, limit) {
+  const self = palletId ? findPalletLoose(palletId) : null;
+  const client = String(customer || (self && self.customer) || '').trim();
+  const names = new Set(normalizeItems(self && self.items).map((it) => foldSearchText(it.name || '')).filter(Boolean));
+  const occupied = new Set(pallets.filter((p) => isInStock(p) && p.shelf && p.id !== palletId).map((p) => p.shelf));
+  const prodA = [], cliA = [];
+  pallets.forEach((p) => {
+    if (!isInStock(p) || !p.shelf || p.id === palletId) return;
+    const s = parseShelfSlot(p.shelf); if (!s) return;
+    if (names.size && normalizeItems(p.items).some((it) => names.has(foldSearchText(it.name || '')))) prodA.push(s);
+    if (client && String(p.customer || '').trim() === client) cliA.push(s);
+  });
+  const dist = (s, list) => list.reduce((m, a) => Math.min(m, a.zone === s.zone ? Math.abs(a.pos - s.pos) : 40), 40);
+  const out = [];
+  (appSettings.zones || []).forEach((z) => zoneLocationCodes(z).forEach((code) => {
+    if (occupied.has(code)) return;
+    const s = parseShelfSlot(code); if (!s) return;
+    const dp = dist(s, prodA), dc = dist(s, cliA);
+    const near = Math.min(dp, dc + 2, 40);
+    const why = dp < 40 && dp <= dc + 2 ? `κοντά στο ίδιο προϊόν (${dp === 0 ? 'ίδια θέση' : dp === 1 ? 'δίπλα' : dp + ' θέσεις'})`
+      : dc < 40 ? `κοντά σε παλέτες του πελάτη (${dc === 0 ? 'ίδια θέση' : dc === 1 ? 'δίπλα' : dc + ' θέσεις'})` : '';
+    out.push({ code, score: (s.level - 1) * 6 + near, level: s.level, why });
+  }));
+  out.sort((a, b) => a.score - b.score || a.code.localeCompare(b.code, 'el', { numeric: true }));
+  return out.slice(0, limit || 6);
+}
+function smartLocHtml(list, fn) {
+  if (!list.length) return '<div class="smart-loc"><span class="wh-dim">Δεν βρέθηκε ελεύθερη θέση ραφιού.</span></div>';
+  return `<div class="smart-loc"><div class="smart-loc-title">💡 Προτεινόμενες ελεύθερες θέσεις — πάτα για να τη διαλέξεις</div><div class="smart-loc-list">${list.map((s, i) =>
+    `<button type="button" class="smart-loc-btn${i === 0 ? ' best' : ''}" onclick="${fn}('${escapeHtml(s.code)}')"><b>${i === 0 ? '⭐ ' : ''}${escapeHtml(s.code)}</b><small>${s.level === 1 ? 'πάτωμα' : 'ύψος ' + s.level}${s.why ? ' · ' + escapeHtml(s.why) : ''}</small></button>`).join('')}</div></div>`;
+}
+function useSmartLinkLoc(code) { setScanLocationType('shelf'); simulateShelfScan(code); }
+function renderSmartLinkBox() {
+  const el = document.getElementById('smartLocBox'); if (!el) return;
+  if (!scanStepPallet || scanStepShelf) { el.innerHTML = ''; return; }
+  el.innerHTML = smartLocHtml(suggestLocations(scanStepPallet.id, scanStepPallet.customer), 'useSmartLinkLoc');
 }

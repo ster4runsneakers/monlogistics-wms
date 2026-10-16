@@ -2243,3 +2243,11 @@ body {
 .dash-kpis{display:flex;gap:.6rem;margin-bottom:.5rem}
 .dash-kpi{flex:1;background:rgba(245,158,11,.12);border-radius:10px;padding:.5rem;text-align:center}
 .dash-kpi.red{background:rgba(239,68,68,.14)}.dash-kpi b{display:block;font-size:1.6rem}.dash-kpi span{font-size:.75rem}
+
+/* set21 smart location */
+.smart-loc{margin-top:.75rem;border:1px dashed rgba(129,140,248,.5);border-radius:10px;padding:.6rem}
+.smart-loc-title{font-size:.85rem;font-weight:600;margin-bottom:.4rem}
+.smart-loc-list{display:flex;flex-wrap:wrap;gap:.4rem}
+.smart-loc-btn{display:flex;flex-direction:column;align-items:flex-start;padding:.45rem .65rem;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:inherit;cursor:pointer;min-width:7.5rem;text-align:left}
+.smart-loc-btn b{font-size:1rem}.smart-loc-btn small{font-size:.7rem;opacity:.75}
+.smart-loc-btn.best{border-color:#10b981;background:rgba(16,185,129,.15)}
