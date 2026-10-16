@@ -2194,3 +2194,14 @@ body {
 /* set16: header wraps so cloud/stats stay visible with many tabs */
 .header-container { flex-wrap: wrap; row-gap: 10px; max-width: 100%; }
 .nav-tabs { flex-wrap: wrap; justify-content: center; }
+
+/* set17: mobile menu */
+.mobile-menu-btn { display: none; }
+@media (max-width: 768px) {
+  .mobile-menu-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 16px; font-size: 16px; font-weight: 600; border-radius: 12px; border: 1px solid rgba(255,255,255,.15); background: rgba(99,102,241,.25); color: #fff; cursor: pointer; }
+  .nav-tabs { display: none !important; width: 100%; flex-direction: column; gap: 6px; }
+  .nav-tabs.open { display: flex !important; }
+  .nav-tabs.open .nav-tab { width: 100%; justify-content: flex-start; padding: 12px 16px; }
+  .nav-tabs.open .nav-label-full { display: inline !important; }
+  .nav-tabs.open .nav-label-short { display: none !important; }
+}

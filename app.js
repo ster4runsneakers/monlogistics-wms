@@ -1,4 +1,4 @@
-const APP_VERSION = 'set16';
+const APP_VERSION = 'set17';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -5191,7 +5191,7 @@ loadCountState();
 
 
 /* ==========================================================================
-   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set16)
+   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set17)
    ========================================================================== */
 let mapSelected = null; // base code e.g. "Β-07"
 
@@ -5270,3 +5270,22 @@ function renderMapDetail(byCode) {
     ${ps.loose.filter((c) => byCode[c]).map((c) => block(c, 'Χωρίς ύψος')).join('')}
     ${ps.aisle.length ? '<h4 style="margin:.6rem 0 .3rem">Μπροστά (διάδρομος)</h4>' + ps.aisle.map((c, k) => block(c, 'Δ' + (k + 1))).join('') : ''}`;
 }
+
+/* set17: mobile menu */
+function toggleMobileMenu(force) {
+  const nav = document.querySelector('.nav-tabs');
+  if (!nav) return;
+  const open = typeof force === 'boolean' ? force : !nav.classList.contains('open');
+  nav.classList.toggle('open', open);
+}
+function updateMobileMenuLabel() {
+  const a = document.querySelector('.nav-tabs .nav-tab.active .nav-label-full');
+  const l = document.getElementById('mobileMenuLabel');
+  if (l) l.textContent = a ? a.textContent : 'Μενού';
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.nav-tabs .nav-tab')) {
+    setTimeout(() => { updateMobileMenuLabel(); toggleMobileMenu(false); window.scrollTo(0, 0); }, 0);
+  }
+});
+updateMobileMenuLabel();
