@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set12">
+  <link rel="stylesheet" href="styles.css?v=set13">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -69,6 +69,11 @@
           <i data-lucide="move" style="width: 18px;"></i>
           <span class="nav-label-full">7. Μεταφορά</span>
           <span class="nav-label-short">7. Μεταφ.</span>
+        </button>
+        <button class="nav-tab" onclick="switchTab('tab-count')">
+          <i data-lucide="clipboard-check" style="width: 18px;"></i>
+          <span class="nav-label-full">8. Απογραφή</span>
+          <span class="nav-label-short">8. Απογρ.</span>
         </button>
         <!--NAV_MORE-->
         <button class="nav-tab" onclick="switchTab('tab-settings')">
@@ -783,12 +788,41 @@
         <div id="moveRecent"></div>
       </div>
     </section>
+    <section id="tab-count" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title"><i data-lucide="clipboard-check" style="color: var(--primary);"></i> Απογραφή</h2>
+        <p class="card-desc">Σκανάρετε τη <strong>θέση</strong> και μετά όλες τις <strong>παλέτες</strong> που βλέπετε εκεί. Η εφαρμογή δείχνει τι λείπει και τι είναι σε λάθος θέση. Στο τέλος πατήστε «Τέλος».</p>
+        <div class="wh-row" style="flex-wrap:wrap;margin-bottom:.5rem">
+          <select id="countZoneSelect" class="form-select" style="max-width:260px"></select>
+          <button type="button" class="btn btn-primary btn-sm" onclick="countStart()">▶ Έναρξη</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="countToggleCamera()">📷 Κάμερα</button>
+          <button type="button" class="btn btn-emerald btn-sm" onclick="countFinish()">🏁 Τέλος</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="countReset()">🗑 Νέα</button>
+        </div>
+        <div id="countCamHost"></div>
+        <div id="countInfo" style="margin:.5rem 0"></div>
+        <div class="wh-steps">
+          <div class="wh-step">
+            <div class="wh-step-title">Θέση</div>
+            <div class="wh-row"><input id="countLocInput" class="form-input" list="locationCodesList" placeholder="π.χ. Β-07-2"><button type="button" class="btn btn-secondary btn-sm" onclick="countApplyLocInput()">OK</button></div>
+          </div>
+          <div class="wh-step">
+            <div class="wh-step-title">Παλέτα σε αυτή τη θέση</div>
+            <div class="wh-row"><input id="countPalletInput" class="form-input" list="movePalletList" placeholder="π.χ. PL-1001"><button type="button" class="btn btn-secondary btn-sm" onclick="countApplyPalletInput()">OK</button></div>
+          </div>
+        </div>
+        <div id="countCurrent" class="wh-step" style="margin:.5rem 0"></div>
+        <h3 class="wh-h3">Θέσεις</h3>
+        <div id="countLocList" class="cnt-chips"></div>
+        <div id="countSummary" style="margin-top:1rem"></div>
+      </div>
+    </section>
     <!--SECTIONS_MORE-->
 
   </main>
 
   <!-- Area used for Clean Printing -->
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set12</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set13</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -859,6 +893,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set12"></script>
+  <script src="app.js?v=set13"></script>
 </body>
 </html>

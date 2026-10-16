@@ -1,4 +1,4 @@
-const APP_VERSION = 'set12';
+const APP_VERSION = 'set13';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -5000,3 +5000,188 @@ function renderMoveTab() {
       : '<span class="wh-dim">Καμία μεταφορά ακόμα</span>';
   }
 }
+
+
+/* ==========================================================================
+   TAB 8: ΑΠΟΓΡΑΦΗ (set13)
+   ========================================================================== */
+const COUNT_KEY = 'monlog_count_v1';
+let countState = null; // { zone, current, checked: {code: [palletIds]}, startedAt, finished }
+
+function loadCountState() {
+  try { countState = JSON.parse(localStorage.getItem(COUNT_KEY) || 'null'); } catch (e) { countState = null; }
+}
+function saveCountState() {
+  try { localStorage.setItem(COUNT_KEY, JSON.stringify(countState)); } catch (e) { /* */ }
+}
+
+function zoneOfCode(code) {
+  const m = String(code || '').match(/^([^-]+)-/);
+  return m ? m[1] : '';
+}
+
+function countZoneCodes(zoneLetter) {
+  const z = (appSettings.zones || []).find((x) => x.letter === zoneLetter);
+  if (!z) return [];
+  return [...zoneLocationCodes(z), ...zoneAisleCodes(z)];
+}
+
+function expectedAt(code) {
+  return pallets.filter((p) => isInStock(p) && p.shelf === code);
+}
+
+function countStart() {
+  const zone = getVal('countZoneSelect');
+  countState = { zone: zone || '', current: null, checked: {}, startedAt: new Date().toISOString(), finished: false };
+  saveCountState();
+  showToast(zone ? `Απογραφή ζώνης ${zone}: σκανάρετε μια θέση` : 'Απογραφή: σκανάρετε μια θέση', 'success');
+  renderCountTab();
+}
+
+function countSetLocation(code) {
+  if (!countState) countState = { zone: zoneOfCode(code), current: null, checked: {}, startedAt: new Date().toISOString(), finished: false };
+  const known = allConfiguredLocationCodes();
+  const c = known.includes(code) ? code : (known.includes(String(code).toUpperCase()) ? String(code).toUpperCase() : code);
+  countState.current = c;
+  countState.finished = false;
+  if (!countState.checked[c]) countState.checked[c] = [];
+  saveCountState();
+  renderCountTab();
+}
+
+function countAddPallet(id) {
+  if (!countState || !countState.current) { showToast('Σκανάρετε πρώτα τη θέση (QR ραφιού)', 'error'); return; }
+  const p = findPalletLoose(id);
+  if (!p) { showToast(`Άγνωστη παλέτα «${id}»`, 'error'); return; }
+  const list = countState.checked[countState.current];
+  if (list.includes(p.id)) { showToast(`Η ${p.id} είναι ήδη σκαναρισμένη`, 'error'); return; }
+  list.push(p.id);
+  saveCountState();
+  if (p.shelf === countState.current && isInStock(p)) showToast(`✓ ${p.id} σωστή θέση`, 'success');
+  else showToast(`⚠️ ${p.id} είναι γραμμένη στο ${p.shelf || 'χωρίς θέση'}`, 'error');
+  renderCountTab();
+}
+
+function countUnscan(id) {
+  if (!countState || !countState.current) return;
+  const list = countState.checked[countState.current] || [];
+  countState.checked[countState.current] = list.filter((x) => x !== id);
+  saveCountState();
+  renderCountTab();
+}
+
+function countScanHandler(r) {
+  if (r.kind === 'loc') { countSetLocation(r.code); return; }
+  if (r.kind === 'pallet') { countAddPallet(r.id); return; }
+  if (findPalletLoose(r.raw)) countAddPallet(r.raw);
+  else showToast(`Δεν αναγνωρίστηκε: ${r.raw}`, 'error');
+}
+function countToggleCamera() { openSharedCamera('countCamHost', countScanHandler); }
+function countApplyLocInput() { const v = getVal('countLocInput').trim(); if (v) { countSetLocation(v); setVal('countLocInput', ''); } }
+function countApplyPalletInput() { const v = getVal('countPalletInput').trim(); if (v) { countAddPallet(v); setVal('countPalletInput', ''); } }
+
+function countMoveHere(id) {
+  const p = findPalletLoose(id);
+  if (!p || !countState || !countState.current) return;
+  if (!confirm(`Μεταφορά της ${p.id} από ${p.shelf || '—'} στο ${countState.current};`)) return;
+  movePalletTo(p, countState.current, 'count');
+  showToast(`✅ ${p.id} → ${countState.current}`, 'success');
+  renderCountTab();
+}
+
+function countLocationResult(code) {
+  const scanned = (countState && countState.checked[code]) || [];
+  const expected = expectedAt(code).map((p) => p.id);
+  const ok = expected.filter((id) => scanned.includes(id));
+  const missing = expected.filter((id) => !scanned.includes(id));
+  const extra = scanned.filter((id) => !expected.includes(id));
+  return { ok, missing, extra, expected, scanned };
+}
+
+function countFinish() {
+  if (!countState) return;
+  countState.finished = true;
+  saveCountState();
+  renderCountTab();
+  const el = document.getElementById('countSummary');
+  if (el) el.scrollIntoView({ behavior: 'smooth' });
+}
+
+function countReset() {
+  if (countState && Object.keys(countState.checked || {}).length && !confirm('Να σβηστεί η τρέχουσα απογραφή;')) return;
+  countState = null;
+  saveCountState();
+  renderCountTab();
+}
+
+function countSummaryHtml() {
+  const codes = Object.keys(countState.checked);
+  let ok = 0; const missing = []; const extra = [];
+  codes.forEach((c) => {
+    const r = countLocationResult(c);
+    ok += r.ok.length;
+    r.missing.forEach((id) => missing.push({ id, code: c }));
+    r.extra.forEach((id) => { const p = findPalletLoose(id); extra.push({ id, code: c, rec: p ? (p.shelf || 'χωρίς θέση') : '?' }); });
+  });
+  const unchecked = countState.zone
+    ? countZoneCodes(countState.zone).filter((c) => !countState.checked[c] && expectedAt(c).length)
+    : [];
+  return `
+    <div class="cnt-sum-grid">
+      <div class="cnt-sum cnt-ok"><b>${codes.length}</b><span>θέσεις ελέγχθηκαν</span></div>
+      <div class="cnt-sum cnt-ok"><b>${ok}</b><span>παλέτες σωστές</span></div>
+      <div class="cnt-sum cnt-miss"><b>${missing.length}</b><span>λείπουν</span></div>
+      <div class="cnt-sum cnt-extra"><b>${extra.length}</b><span>σε λάθος θέση</span></div>
+    </div>
+    ${missing.length ? `<h4>❌ Λείπουν (γραμμένες εκεί αλλά δεν βρέθηκαν)</h4>${missing.map((m) => `<div class="wh-hist"><strong>${escapeHtml(m.id)}</strong> — ${escapeHtml(m.code)}</div>`).join('')}` : ''}
+    ${extra.length ? `<h4>⚠️ Βρέθηκαν σε άλλη θέση</h4>${extra.map((m) => `<div class="wh-hist"><strong>${escapeHtml(m.id)}</strong> βρέθηκε στο ${escapeHtml(m.code)} (γραμμένη: ${escapeHtml(m.rec)})</div>`).join('')}` : ''}
+    ${unchecked.length ? `<h4>⏳ Θέσεις με παλέτες που δεν ελέγχθηκαν (${unchecked.length})</h4><div class="wh-dim">${unchecked.map(escapeHtml).join(', ')}</div>` : ''}
+    ${!missing.length && !extra.length ? '<p>🎉 Όλα σωστά!</p>' : ''}`;
+}
+
+function renderCountTab() {
+  try { renderMoveTab(); } catch (e) { /* datalist */ }
+  const sel = document.getElementById('countZoneSelect');
+  if (sel) {
+    const cur = sel.value || (countState && countState.zone) || '';
+    sel.innerHTML = '<option value="">— Όλες / ελεύθερα —</option>' + (appSettings.zones || []).map((z) => `<option value="${escapeHtml(z.letter)}">${escapeHtml(z.letter + ' · ' + z.name)}</option>`).join('');
+    sel.value = cur;
+  }
+  const info = document.getElementById('countInfo');
+  const cur = document.getElementById('countCurrent');
+  const list = document.getElementById('countLocList');
+  const sum = document.getElementById('countSummary');
+  if (!countState) {
+    if (info) info.innerHTML = '<span class="wh-dim">Διαλέξτε ζώνη και πατήστε «Έναρξη», ή απλά σκανάρετε μια θέση.</span>';
+    if (cur) cur.innerHTML = ''; if (list) list.innerHTML = ''; if (sum) sum.innerHTML = '';
+    return;
+  }
+  const doneCodes = Object.keys(countState.checked);
+  const zoneCodesWithPallets = countState.zone ? countZoneCodes(countState.zone).filter((c) => expectedAt(c).length) : [];
+  if (info) info.innerHTML = `Απογραφή ${countState.zone ? 'ζώνης <strong>' + escapeHtml(countState.zone) + '</strong>' : ''} από ${fmtDateTime(countState.startedAt)} · ελέγχθηκαν <strong>${doneCodes.length}</strong> θέσεις${countState.zone ? ' · με παλέτες στο σύστημα: ' + zoneCodesWithPallets.length : ''}`;
+  if (cur) {
+    if (!countState.current) cur.innerHTML = '<div class="wh-dim">👉 Σκανάρετε το QR μιας θέσης για να ξεκινήσετε.</div>';
+    else {
+      const r = countLocationResult(countState.current);
+      const row = (id, cls, extraHtml) => { const p = findPalletLoose(id); return `<div class="cnt-pal ${cls}"><div><strong>${escapeHtml(id)}</strong> <span class="wh-dim">${escapeHtml((p && p.customer) || '')}</span></div>${extraHtml || ''}</div>`; };
+      cur.innerHTML = `
+        <div class="wh-big">📍 ${escapeHtml(countState.current)}</div>
+        <div class="wh-dim">Αναμένονται ${r.expected.length} · σκαναρίστηκαν ${r.scanned.length}</div>
+        ${r.ok.map((id) => row(id, 'cnt-ok', `<button class="btn btn-secondary btn-sm" onclick="countUnscan('${escapeHtml(id)}')">↺</button>`)).join('')}
+        ${r.missing.map((id) => row(id, 'cnt-miss', '<span>❌ δεν βρέθηκε ακόμα</span>')).join('')}
+        ${r.extra.map((id) => { const p = findPalletLoose(id); return row(id, 'cnt-extra', `<span>⚠️ γραμμένη: ${escapeHtml((p && p.shelf) || 'χωρίς θέση')}</span> <button class="btn btn-emerald btn-sm" onclick="countMoveHere('${escapeHtml(id)}')">Μεταφορά εδώ</button> <button class="btn btn-secondary btn-sm" onclick="countUnscan('${escapeHtml(id)}')">↺</button>`); }).join('')}
+        ${!r.expected.length && !r.scanned.length ? '<div class="wh-dim">Άδεια θέση (κανονικά). Σκανάρετε παλέτες αν βρείτε.</div>' : ''}`;
+    }
+  }
+  if (list) {
+    const codes = countState.zone ? Array.from(new Set([...zoneCodesWithPallets, ...doneCodes])) : doneCodes;
+    list.innerHTML = codes.map((c) => {
+      const checked = !!countState.checked[c];
+      const r = countLocationResult(c);
+      const cls = !checked ? 'cnt-todo' : (r.missing.length || r.extra.length) ? 'cnt-bad' : 'cnt-good';
+      return `<button type="button" class="cnt-chip ${cls}${c === countState.current ? ' cnt-cur' : ''}" onclick="countSetLocation('${escapeHtml(c)}')">${escapeHtml(c)} <small>${checked ? r.ok.length + '/' + r.expected.length : r.expected.length}</small></button>`;
+    }).join('') || '<span class="wh-dim">—</span>';
+  }
+  if (sum) sum.innerHTML = countState.finished ? countSummaryHtml() : '';
+}
+loadCountState();
