@@ -1,4 +1,4 @@
-const APP_VERSION = 'set17';
+const APP_VERSION = 'set18';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -6,7 +6,32 @@ const APP_VERSION = 'set17';
 
 // Application State
 const STATE_KEY = 'monlog_pallets_v1';
-let pallets = [];
+let pallets = [];      // view: only the selected warehouse
+let allPallets = [];   // every warehouse (set18)
+/* ---------- set18: multi-warehouse ----------
+   Docs without warehouseId belong to 'w1' (the original warehouse).
+   w1 keeps settings/main; other warehouses use settings/wh_<id>. */
+const WH_KEY = 'monlog_current_wh_v1';
+const WH_LIST_KEY = 'monlog_wh_list_v1';
+let warehouses = [{ id: 'w1', name: 'Αποθήκη 1' }];
+let currentWh = 'w1';
+try {
+  const wl = JSON.parse(localStorage.getItem(WH_LIST_KEY) || 'null');
+  if (Array.isArray(wl) && wl.length) warehouses = wl;
+  currentWh = localStorage.getItem(WH_KEY) || 'w1';
+} catch (e) { /* */ }
+function whOf(x) { return (x && x.warehouseId) || 'w1'; }
+function inCurrentWh(x) { return whOf(x) === currentWh; }
+function syncAllPallets() {
+  pallets.forEach((p) => { if (!p.warehouseId && currentWh !== 'w1') p.warehouseId = currentWh; });
+  const ids = new Set(pallets.map((p) => p.id));
+  allPallets = allPallets.filter((p) => !inCurrentWh(p) && !ids.has(p.id)).concat(pallets);
+}
+function syncAllPickLists() {
+  pickLists.forEach((p) => { if (!p.warehouseId && currentWh !== 'w1') p.warehouseId = currentWh; });
+  const ids = new Set(pickLists.map((p) => p.id));
+  allPickLists = allPickLists.filter((p) => !inCurrentWh(p) && !ids.has(p.id)).concat(pickLists);
+}
 let activePalletForLabel = null;
 
 // Scanner Step State
@@ -30,6 +55,7 @@ let shelfTagDelegatedBound = false;
 // Pick lists state
 const PICKLISTS_KEY = 'monlog_picklists_v1';
 let pickLists = [];
+let allPickLists = [];
 /** @type {{ productName: string, qtyNeeded: number }[]} */
 let pickImportLines = [];
 let pickImportMeta = { customer: '', orderRef: '' };
@@ -51,7 +77,9 @@ let firebaseFallbackToastShown = false;
 document.addEventListener('DOMContentLoaded', () => {
   loadPalletsFromStorage();
   loadPickListsFromStorage();
+  if (!warehouses.some((w) => w.id === currentWh)) currentWh = 'w1';
   loadSettingsFromStorage();
+  renderWarehouseUI();
   const usingCloud = initFirebaseSync();
 
   // Initialize Lucide Icons if available
@@ -137,6 +165,7 @@ function palletToFirestoreDoc(p) {
     shippedRef: p.shippedRef || null,
     shippedNote: p.shippedNote || null,
     ...(Array.isArray(p.history) ? { history: p.history.slice(-50) } : {}),
+    ...(p.warehouseId ? { warehouseId: p.warehouseId } : {}),
     updatedAt: new Date().toISOString()
   };
 }
@@ -204,7 +233,8 @@ function isInStock(p) {
 
 function mirrorPalletsToLocalCache() {
   try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(pallets));
+    syncAllPallets();
+    localStorage.setItem(STATE_KEY, JSON.stringify(allPallets));
   } catch (e) {
     console.error("Failed to mirror pallets to localStorage:", e);
   }
@@ -216,7 +246,8 @@ function loadPalletsFromStorage() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        pallets = sortPalletsByCreatedDesc(parsed.map((p) => normalizePallet(p)));
+        allPallets = parsed.map((p) => normalizePallet(p));
+        pallets = sortPalletsByCreatedDesc(allPallets.filter(inCurrentWh));
       } else {
         console.warn("Invalid pallets storage shape; resetting to []");
         pallets = [];
@@ -245,7 +276,8 @@ function subscribePallets() {
       const data = d.data() || {};
       next.push(normalizePallet({ id: d.id, ...data }));
     });
-    pallets = sortPalletsByCreatedDesc(next);
+    allPallets = next;
+    pallets = sortPalletsByCreatedDesc(next.filter(inCurrentWh));
     mirrorPalletsToLocalCache();
     renderInventoryTable();
     renderProductSearch();
@@ -285,6 +317,7 @@ function initFirebaseSync() {
     subscribePallets();
     subscribePickLists();
     subscribeSettings();
+    subscribeWarehouses();
     return true;
   } catch (e) {
     console.error("Firebase init failed:", e);
@@ -298,6 +331,7 @@ function initFirebaseSync() {
 
 function upsertPalletsToCloud(ids) {
   if (!cloudEnabled || !db || applyingRemoteSnapshot) return;
+  syncAllPallets();
   const unique = Array.from(new Set((ids || []).filter(Boolean)));
   unique.forEach((id) => {
     const p = pallets.find((x) => x.id === id);
@@ -543,7 +577,9 @@ function inventoryProductsCellHtml(items) {
    TAB 1: PALLET QR GENERATION & PRINT LABEL
    ========================================================================== */
 function generateAutoPalletId() {
-  const randomNum = Math.floor(1000 + Math.random() * 9000);
+  let randomNum, tries = 0;
+  do { randomNum = Math.floor(1000 + Math.random() * 9000); tries++; }
+  while (tries < 50 && allPallets.concat(pallets).some((p) => p.id === `PL-${randomNum}`));
   document.getElementById('palletId').value = `PL-${randomNum}`;
 }
 
@@ -564,6 +600,11 @@ function handleCreatePallet(e) {
     return;
   }
 
+  const otherWh = allPallets.find((p) => p.id === palletIdInput && !inCurrentWh(p));
+  if (otherWh) {
+    showToast(`Ο κωδικός ${palletIdInput} υπάρχει ήδη σε άλλη αποθήκη (${whName(whOf(otherWh))})`, 'error');
+    return;
+  }
   // Check if pallet ID exists
   let existingIndex = pallets.findIndex(p => p.id === palletIdInput);
   let palletObj;
@@ -2145,7 +2186,8 @@ function normalizePickList(raw) {
     status,
     createdAt: p.createdAt || new Date().toISOString(),
     updatedAt: p.updatedAt || p.createdAt || new Date().toISOString(),
-    lines
+    lines,
+    ...(p.warehouseId ? { warehouseId: String(p.warehouseId) } : {})
   };
 }
 
@@ -2157,7 +2199,8 @@ function pickListToFirestoreDoc(pl) {
     status: n.status,
     createdAt: n.createdAt,
     updatedAt: n.updatedAt,
-    lines: n.lines
+    lines: n.lines,
+    ...(pl.warehouseId ? { warehouseId: pl.warehouseId } : {})
   };
 }
 
@@ -2171,7 +2214,8 @@ function sortPickListsByUpdatedDesc(list) {
 
 function mirrorPickListsToLocalCache() {
   try {
-    localStorage.setItem(PICKLISTS_KEY, JSON.stringify(pickLists));
+    syncAllPickLists();
+    localStorage.setItem(PICKLISTS_KEY, JSON.stringify(allPickLists));
   } catch (e) {
     console.error('Failed to mirror pickLists to localStorage:', e);
   }
@@ -2190,7 +2234,8 @@ function loadPickListsFromStorage() {
       pickLists = [];
       return;
     }
-    pickLists = sortPickListsByUpdatedDesc(parsed.map(normalizePickList));
+    allPickLists = parsed.map(normalizePickList);
+    pickLists = sortPickListsByUpdatedDesc(allPickLists.filter(inCurrentWh));
   } catch (e) {
     console.error('Failed to load pickLists:', e);
     pickLists = [];
@@ -2210,7 +2255,8 @@ function subscribePickLists() {
       const data = d.data() || {};
       next.push(normalizePickList({ id: d.id, ...data }));
     });
-    pickLists = sortPickListsByUpdatedDesc(next);
+    allPickLists = next;
+    pickLists = sortPickListsByUpdatedDesc(next.filter(inCurrentWh));
     mirrorPickListsToLocalCache();
     renderPickTab();
     applyingPickRemoteSnapshot = false;
@@ -2222,6 +2268,7 @@ function subscribePickLists() {
 
 function upsertPickListsToCloud(ids) {
   if (!cloudEnabled || !db || applyingPickRemoteSnapshot) return;
+  syncAllPickLists();
   const unique = Array.from(new Set((ids || []).filter(Boolean)));
   unique.forEach((id) => {
     const pl = pickLists.find((x) => x.id === id);
@@ -4088,7 +4135,7 @@ function getExpiryWarnDays() {
 
 function loadSettingsFromStorage() {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
+    const raw = localStorage.getItem(settingsLocalKey());
     appSettings = normalizeSettings(raw ? JSON.parse(raw) : null);
   } catch (e) {
     appSettings = defaultSettings();
@@ -4096,13 +4143,15 @@ function loadSettingsFromStorage() {
 }
 
 function mirrorSettingsToLocal() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(appSettings)); } catch (e) { /* quota */ }
+  try { localStorage.setItem(settingsLocalKey(), JSON.stringify(appSettings)); } catch (e) { /* quota */ }
 }
 
 function subscribeSettings() {
   if (!db) return;
   if (settingsUnsub) settingsUnsub();
-  settingsUnsub = db.collection('settings').doc('main').onSnapshot((snap) => {
+  const docId = settingsDocId();
+  settingsUnsub = db.collection('settings').doc(docId).onSnapshot((snap) => {
+    if (docId !== settingsDocId()) return;
     settingsLoadedFromCloud = true;
     if (snap.exists) {
       appSettings = normalizeSettings(snap.data());
@@ -4802,7 +4851,7 @@ function saveSettingsFromForm() {
   settingsPreviewSize = '';
   onSettingsChanged(false);
   if (cloudEnabled && db) {
-    db.collection('settings').doc('main').set({ ...next, updatedAt: new Date().toISOString() })
+    db.collection('settings').doc(settingsDocId()).set({ ...next, updatedAt: new Date().toISOString() })
       .then(() => showToast('Οι ρυθμίσεις αποθηκεύτηκαν για όλες τις συσκευές', 'success'))
       .catch((err) => {
         console.error('Settings save failed:', err);
@@ -5012,10 +5061,10 @@ const COUNT_KEY = 'monlog_count_v1';
 let countState = null; // { zone, current, checked: {code: [palletIds]}, startedAt, finished }
 
 function loadCountState() {
-  try { countState = JSON.parse(localStorage.getItem(COUNT_KEY) || 'null'); } catch (e) { countState = null; }
+  try { countState = JSON.parse(localStorage.getItem(currentWh === 'w1' ? COUNT_KEY : COUNT_KEY + '_' + currentWh) || 'null'); } catch (e) { countState = null; }
 }
 function saveCountState() {
-  try { localStorage.setItem(COUNT_KEY, JSON.stringify(countState)); } catch (e) { /* */ }
+  try { localStorage.setItem(currentWh === 'w1' ? COUNT_KEY : COUNT_KEY + '_' + currentWh, JSON.stringify(countState)); } catch (e) { /* */ }
 }
 
 function zoneOfCode(code) {
@@ -5289,3 +5338,107 @@ document.addEventListener('click', (e) => {
   }
 });
 updateMobileMenuLabel();
+
+
+/* ==========================================================================
+   set18: ΠΟΛΛΕΣ ΑΠΟΘΗΚΕΣ
+   ========================================================================== */
+function settingsDocId() { return currentWh === 'w1' ? 'main' : 'wh_' + currentWh; }
+function settingsLocalKey() { return currentWh === 'w1' ? SETTINGS_KEY : SETTINGS_KEY + '_' + currentWh; }
+function whName(id) { const w = warehouses.find((x) => x.id === id); return w ? w.name : id; }
+
+let whUnsub = null;
+function subscribeWarehouses() {
+  if (!db) return;
+  if (whUnsub) whUnsub();
+  whUnsub = db.collection('settings').doc('warehouses').onSnapshot((snap) => {
+    const d = snap.exists ? snap.data() : null;
+    if (d && Array.isArray(d.list) && d.list.length) {
+      warehouses = d.list.filter((w) => w && w.id && w.name);
+      if (!warehouses.some((w) => w.id === 'w1')) warehouses.unshift({ id: 'w1', name: 'Αποθήκη 1' });
+      try { localStorage.setItem(WH_LIST_KEY, JSON.stringify(warehouses)); } catch (e) { /* */ }
+      if (!warehouses.some((w) => w.id === currentWh)) { selectWarehouse('w1'); return; }
+      renderWarehouseUI();
+    }
+  }, (err) => console.error('Warehouses snapshot error:', err));
+}
+
+function saveWarehouseList() {
+  try { localStorage.setItem(WH_LIST_KEY, JSON.stringify(warehouses)); } catch (e) { /* */ }
+  renderWarehouseUI();
+  if (cloudEnabled && db) {
+    db.collection('settings').doc('warehouses').set({ list: warehouses, updatedAt: new Date().toISOString() })
+      .catch((err) => { console.error(err); showToast('Σφάλμα cloud στις αποθήκες', 'error'); });
+  }
+}
+
+function selectWarehouse(id) {
+  if (!warehouses.some((w) => w.id === id)) id = 'w1';
+  if (typeof settingsFormDirty !== 'undefined' && settingsFormDirty && id !== currentWh &&
+      !confirm('Έχεις μη αποθηκευμένες ρυθμίσεις. Αλλαγή αποθήκης χωρίς αποθήκευση;')) { renderWarehouseUI(); return; }
+  syncAllPallets(); syncAllPickLists();
+  currentWh = id;
+  try { localStorage.setItem(WH_KEY, id); } catch (e) { /* */ }
+  pallets = sortPalletsByCreatedDesc(allPallets.filter(inCurrentWh));
+  pickLists = sortPickListsByUpdatedDesc(allPickLists.filter(inCurrentWh));
+  settingsFormDirty = false;
+  loadSettingsFromStorage();
+  if (cloudEnabled && db) subscribeSettings();
+  try { loadCountState(); } catch (e) { /* */ }
+  renderWarehouseUI();
+  try { onSettingsChanged(false); } catch (e) { console.error(e); }
+  [renderInventoryTable, renderProductSearch, updateStats, populateSimulators, renderPickTab,
+   (typeof refreshWarehouseTabs === 'function' ? refreshWarehouseTabs : null)]
+    .forEach((f) => { try { f && f(); } catch (e) { console.error(e); } });
+  try { if (typeof generateAutoPalletId === 'function') generateAutoPalletId(); } catch (e) { /* */ }
+  try { const act = document.querySelector('.tab-content.active'); if (act) switchTab(act.id); } catch (e) { /* */ }
+}
+
+function renderWarehouseUI() {
+  const opts = warehouses.map((w) => `<option value="${escapeHtmlWh(w.id)}"${w.id === currentWh ? ' selected' : ''}>🏭 ${escapeHtmlWh(w.name)}</option>`).join('');
+  document.querySelectorAll('.wh-select').forEach((sel) => { sel.innerHTML = opts; sel.value = currentWh; });
+  const list = document.getElementById('whManageList');
+  if (list) {
+    list.innerHTML = warehouses.map((w) => {
+      syncAllPallets();
+      const n = allPallets.filter((p) => whOf(p) === w.id).length;
+      return `<div class="wh-row" style="display:flex;gap:.4rem;align-items:center;margin:.3rem 0;flex-wrap:wrap">
+        <strong style="min-width:9rem">${escapeHtmlWh(w.name)}${w.id === currentWh ? ' ✓' : ''}</strong>
+        <span style="color:var(--text-muted);font-size:.85rem">${n} παλέτες</span>
+        <button type="button" class="btn btn-secondary" onclick="renameWarehouse('${w.id}')">✏️ Μετονομασία</button>
+        ${w.id === 'w1' ? '' : `<button type="button" class="btn btn-secondary" onclick="deleteWarehouse('${w.id}')">🗑️ Διαγραφή</button>`}
+      </div>`;
+    }).join('');
+  }
+}
+function escapeHtmlWh(v) { return String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function addWarehouse() {
+  const name = (prompt('Όνομα νέας αποθήκης:', 'Αποθήκη ' + (warehouses.length + 1)) || '').trim();
+  if (!name) return;
+  const id = 'w' + Date.now().toString(36);
+  warehouses.push({ id, name });
+  try { localStorage.setItem(SETTINGS_KEY + '_' + id, JSON.stringify({ ...appSettings, zones: defaultSettings().zones })); } catch (e) { /* */ }
+  saveWarehouseList();
+  if (confirm(`Δημιουργήθηκε η «${name}». Να μεταβείς τώρα σε αυτή για να ορίσεις τις ζώνες της;`)) selectWarehouse(id);
+  else showToast(`Προστέθηκε η αποθήκη ${name}`, 'success');
+}
+function renameWarehouse(id) {
+  const w = warehouses.find((x) => x.id === id); if (!w) return;
+  const name = (prompt('Νέο όνομα αποθήκης:', w.name) || '').trim();
+  if (!name || name === w.name) return;
+  w.name = name;
+  saveWarehouseList();
+  showToast('Η αποθήκη μετονομάστηκε', 'success');
+}
+function deleteWarehouse(id) {
+  if (id === 'w1') return;
+  const w = warehouses.find((x) => x.id === id); if (!w) return;
+  const used = allPallets.concat(pallets).some((p) => whOf(p) === id) || allPickLists.concat(pickLists).some((p) => whOf(p) === id);
+  if (used) { showToast(`Η «${w.name}» έχει παλέτες ή λίστες — άδειασέ την πρώτα`, 'error'); return; }
+  if (!confirm(`Διαγραφή της αποθήκης «${w.name}»;`)) return;
+  warehouses = warehouses.filter((x) => x.id !== id);
+  saveWarehouseList();
+  if (currentWh === id) selectWarehouse('w1');
+  showToast('Η αποθήκη διαγράφηκε', 'success');
+}

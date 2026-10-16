@@ -2205,3 +2205,8 @@ body {
   .nav-tabs.open .nav-label-full { display: inline !important; }
   .nav-tabs.open .nav-label-short { display: none !important; }
 }
+
+/* set18 warehouse selector */
+.wh-select{background:var(--bg-card,#1e293b);color:inherit;border:1px solid var(--border,#475569);border-radius:8px;padding:.35rem .5rem;font-size:.85rem;max-width:200px;font-weight:600}
+@media (max-width:768px){.wh-select{max-width:none;width:100%;font-size:1rem;padding:.55rem}}
+.wh-select option{background:#1e293b;color:#fff}
