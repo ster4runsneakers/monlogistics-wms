@@ -1,4 +1,4 @@
-const APP_VERSION = 'set4';
+const APP_VERSION = 'set5';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -4399,15 +4399,23 @@ function singleLabelInnerHtml(sp, qrUrl, boxW, boxH, layout, company) {
         ${(sp.lines || []).slice(0, 4).map((l) => `<div style="font-size:${lf}mm;line-height:1.2">${e(l)}</div>`).join('')}
       </div></div>`;
   }
-  // column: QR on top, text below
-  const qr = Math.min(boxW - pad * 2, boxH * 0.58);
-  const code = Math.max(3.5, Math.min(boxH * 0.13, (boxW - pad * 2) / (Math.max(4, String(sp.code).length) * 0.62)));
-  const lf = Math.max(2.2, Math.min(boxW * 0.08, 4.5));
-  return `<div class="lab" style="width:${boxW}mm;height:${boxH}mm;padding:${pad}mm;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:${pad * 0.7}mm;text-align:center">
+  // column (Όρθιο): QR on top across the full width, text block fills the rest.
+  // v=set5: code font scaled by code length so the full code always fits; plus a fit-script
+  // in the print doc shrinks any line that still overflows.
+  const iw = boxW - pad * 2;
+  const qr = Math.min(iw, boxH * 0.55);
+  const nLines = Math.min(3, (sp.lines || []).length) + (company ? 1 : 0);
+  const textH = boxH - qr - pad * 3;
+  const codeLen = Math.max(4, String(sp.code).length);
+  const code = Math.max(3, Math.min(textH * 0.45, iw / (codeLen * 0.72)));
+  const lf = Math.max(2.2, Math.min(iw * 0.09, (textH - code * 1.1) / Math.max(1, nLines) / 1.25, 6));
+  return `<div class="lab" style="width:${boxW}mm;height:${boxH}mm;padding:${pad}mm;display:flex;flex-direction:column;align-items:center;justify-content:space-evenly;text-align:center">
     <img src="${e(qrUrl || '')}" style="width:${qr}mm;height:${qr}mm;flex:0 0 auto">
-    <div style="font-size:${code}mm;font-weight:800;line-height:1.05;white-space:nowrap">${e(sp.code)}</div>
-    ${(sp.lines || []).slice(0, 3).map((l) => `<div style="font-size:${lf}mm;line-height:1.2">${e(l)}</div>`).join('')}
-    ${company ? `<div style="font-size:${lf * 0.85}mm">${e(company)}</div>` : ''}
+    <div style="width:100%;min-width:0">
+    <div class="fit" style="font-size:${code}mm;font-weight:800;line-height:1.1;white-space:nowrap">${e(sp.code)}</div>
+    ${(sp.lines || []).slice(0, 3).map((l) => `<div class="fit" style="font-size:${lf}mm;line-height:1.25;white-space:nowrap">${e(l)}</div>`).join('')}
+    ${company ? `<div class="fit" style="font-size:${lf * 0.85}mm;white-space:nowrap">${e(company)}</div>` : ''}
+    </div>
   </div>`;
 }
 
@@ -4427,7 +4435,7 @@ async function buildSingleLabelDoc(specs, p) {
     }
     return `<div class="pg"><div class="box">${U(inner)}</div></div>`;
   }).join('');
-  // v=set4: all sizes are relative to the page Chrome/driver actually gives (100vw × 100vh),
+  // v=set4+: all sizes are relative to the page Chrome/driver actually gives (100vw × 100vh),
   // so content fills the paper even if Chrome ignores @page size.
   return `<!doctype html><html><head><meta charset="utf-8"><title>Labels ${APP_VERSION}</title><style>
 @page { size: ${pw}mm ${ph}mm; margin: 0; }
@@ -4439,7 +4447,10 @@ html, body { width: 100vw; margin: 0; padding: 0; background: #fff; color: #000;
 .box { position: relative; width: calc(var(--u) * ${pw}); height: calc(var(--u) * ${ph}); overflow: hidden; flex: 0 0 auto; }
 .lab { overflow: hidden; }
 img { display: block; image-rendering: pixelated; }
-</style></head><body>${pages}</body></html>`;
+</style></head><body>${pages}<script>
+(function(){function fit(){document.querySelectorAll('.fit').forEach(function(el){el.style.transform='';var p=el.parentElement.clientWidth,w=el.scrollWidth;if(w>p&&p>0){var fs=parseFloat(getComputedStyle(el).fontSize);el.style.fontSize=(fs*p/w*0.97)+'px';}});}
+fit();window.addEventListener('beforeprint',fit);window.addEventListener('resize',fit);})();
+<\/script></body></html>`;
 }
 
 function printHtmlInIframe(html) {
