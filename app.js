@@ -1,3 +1,4 @@
+const APP_VERSION = 'set4';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -4415,6 +4416,7 @@ async function buildSingleLabelDoc(specs, p) {
   const c = appSettings.company;
   const company = p.showCompany && c.name ? c.name : '';
   const urls = await Promise.all(specs.map((sp) => qrDataUrl(sp.qr, 400)));
+  const U = (h) => h.replace(/(-?\d+(?:\.\d+)?)mm/g, 'calc(var(--u) * $1)');
   const pages = specs.map((sp, i) => {
     let inner;
     if (mode === 'rot') {
@@ -4423,14 +4425,18 @@ async function buildSingleLabelDoc(specs, p) {
     } else {
       inner = singleLabelInnerHtml(sp, urls[i], pw, ph, mode, company);
     }
-    return `<div class="pg">${inner}</div>`;
+    return `<div class="pg"><div class="box">${U(inner)}</div></div>`;
   }).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Labels</title><style>
+  // v=set4: all sizes are relative to the page Chrome/driver actually gives (100vw × 100vh),
+  // so content fills the paper even if Chrome ignores @page size.
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Labels ${APP_VERSION}</title><style>
 @page { size: ${pw}mm ${ph}mm; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { width: ${pw}mm; margin: 0; padding: 0; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.pg { position: relative; width: ${pw}mm; height: ${ph}mm; overflow: hidden; break-after: page; page-break-after: always; }
+:root { --u: min(calc(100vw / ${pw}), calc(100vh / ${ph})); }
+html, body { width: 100vw; margin: 0; padding: 0; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pg { position: relative; width: 100vw; height: 100vh; overflow: hidden; display: flex; align-items: center; justify-content: center; break-after: page; page-break-after: always; }
 .pg:last-child { break-after: auto; page-break-after: auto; }
+.box { position: relative; width: calc(var(--u) * ${pw}); height: calc(var(--u) * ${ph}); overflow: hidden; flex: 0 0 auto; }
 .lab { overflow: hidden; }
 img { display: block; image-rendering: pixelated; }
 </style></head><body>${pages}</body></html>`;
@@ -4463,7 +4469,11 @@ async function printLabelsSized(specs, printerOverride) {
   if (labelPrintBusy) return;
   labelPrintBusy = true;
   try {
-    const pr = printerOverride || appSettings.printer;
+    const pr = { ...(printerOverride || appSettings.printer) };
+    // Safety: a DYMO label preset implies DYMO single-label printing with that preset's size,
+    // even if the saved type/size is stale (e.g. old a4 / 70×42)
+    const dp = pr.labelPreset && LABEL_PRESETS[pr.labelPreset];
+    if (dp && dp.dymo) { pr.type = 'dymo'; pr.width = dp.w; pr.height = dp.h; }
     if (pr.type === 'dymo' || pr.type === 'thermal' || pr.type === 'other') {
       if (specs.length > 30) showToast(`Προετοιμασία ${specs.length} ετικετών…`, 'success');
       const html = await buildSingleLabelDoc(specs, pr);
@@ -4510,7 +4520,9 @@ function printAllLocationLabels(zoneIndex) {
 function printTestLabel() {
   const z = (appSettings.zones || [])[1] || (appSettings.zones || [])[0];
   const code = z ? zoneLocationCodes(z)[Math.min(13, zoneLocationCodes(z).length - 1)] : 'Β-07-2';
-  printLabelsSized([locationCodeToLabelSpec(code)], printerFromForm());
+  const p = printerFromForm();
+  showToast(`Δοκιμή ${APP_VERSION}: ${p.type} ${p.width}×${p.height} ${p.orient || ''}`, 'success');
+  printLabelsSized([locationCodeToLabelSpec(code)], p);
 }
 
 /* ---------- Settings form ---------- */
