@@ -1,4 +1,4 @@
-const APP_VERSION = 'set22';
+const APP_VERSION = 'set23';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -5866,3 +5866,75 @@ function initClientPortalIfRequested() {
   } catch (e) { console.error(e); portalShow('<p style="padding:2rem">Σφάλμα φόρτωσης.</p>'); }
   return true;
 }
+
+/* ==========================================================================
+   set23: ΦΩΤΟΓΡΑΦΙΑ ΔΕΛΤΙΟΥ → PICKING (OCR στον browser, Tesseract ell+eng)
+   ========================================================================== */
+function imageFileToCanvas(file, maxSide) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, (maxSide || 2200) / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      const g = c.getContext('2d');
+      g.filter = 'grayscale(1)';
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); resolve(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Δεν άνοιξε η φωτογραφία')); };
+    img.src = url;
+  });
+}
+/** Generic fallback: lines like "Product name ... 12" → product + qty. */
+function genericOcrLinesToMatrix(text) {
+  const matrix = [['ΠΕΡΙΓΡΑΦΗ', 'ΠΟΣΟΤΗΤΑ']];
+  String(text || '').split(/\r?\n/).forEach((raw) => {
+    const line = raw.replace(/[|_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (line.length < 4 || isSlipHeaderOrTotalLine(line)) return;
+    if (/^(παραγγελ|παραγγελ|αρ\.?\s*παρ|order|πελ[άα]τ|ημερομ|σ[ύυ]νολ|τηλ|α\.?φ\.?μ|σελ[ίι]δ|δελτ[ίι]ο)/i.test(foldSearchText(line).replace(/^\W+/, '')) || /^(ΠΑΡΑΓΓΕΛ|ΠΕΛΑΤ|ΣΥΝΟΛ|ΗΜΕΡΟΜ|ΔΕΛΤΙΟ)/i.test(line)) return;
+    const m = line.match(/^(.*?[A-Za-zΑ-Ωα-ωΆ-ώ].*?)\s+(\d+(?:[.,]\d+)?)\s*(?:τεμ\.?|τμχ\.?|τεμάχια|κιβ\.?|κουτ\.?|pcs|τ\.)?\s*(?:\d+[.,]\d{2}\s*€?\s*){0,3}$/i);
+    if (!m) return;
+    const name = m[1].replace(/^\d+[.)]?\s+/, '').trim();
+    const qty = parseFloat(m[2].replace(',', '.'));
+    if (name.length >= 3 && qty > 0 && qty < 100000) matrix.push([name, qty]);
+  });
+  return matrix;
+}
+function setPickPhotoStatus(msg) { const el = document.getElementById('pickPhotoStatus'); if (el) el.textContent = msg || ''; }
+async function onPickPhotoChange(ev) {
+  const file = ev && ev.target && ev.target.files && ev.target.files[0];
+  if (!file) return;
+  try {
+    setPickPhotoStatus('📷 Ετοιμάζω τη φωτογραφία…');
+    const canvas = await imageFileToCanvas(file, 2200);
+    setPickPhotoStatus('🔎 Διαβάζω το κείμενο… (την 1η φορά κατεβαίνουν τα ελληνικά, λίγα δευτερόλεπτα)');
+    const text = await ocrCanvasesGreekEng([canvas], (m) => setPickPhotoStatus('🔎 ' + m.replace('PDF', 'δελτίο')));
+    if (!text) throw new Error('Δεν διαβάστηκε κείμενο — δοκίμασε πιο καθαρή φωτογραφία');
+    const ta = document.getElementById('pickPhotoText'); if (ta) { ta.value = text; ta.closest('details').hidden = false; }
+    applyPickOcrText(text);
+  } catch (err) {
+    console.error('Photo OCR failed:', err);
+    setPickPhotoStatus('');
+    showToast(err && err.message ? err.message : 'Αποτυχία ανάγνωσης φωτογραφίας', 'error');
+  } finally { if (ev && ev.target) ev.target.value = ''; }
+}
+function applyPickOcrText(text) {
+  const slip = parseOrderSlipTextToMatrix(text);
+  let res = slip.matrix && slip.matrix.length > 1 ? extractLinesFromMatrix(slip.matrix) : { error: 'none' };
+  if (res.error || !res.lines || !res.lines.length) res = extractLinesFromMatrix(genericOcrLinesToMatrix(text));
+  if (res.error || !res.lines || !res.lines.length) {
+    setPickPhotoStatus('Δεν βρέθηκαν γραμμές. Διόρθωσε το κείμενο παρακάτω και πάτα «Ξαναδιάβασε».');
+    showToast('Δεν βρέθηκαν γραμμές προϊόντων στη φωτογραφία', 'error');
+    return;
+  }
+  const hdr = /^(paraggel|pelat|synol|imerom|deltio|order|total)/;
+  pickImportLines = res.lines.filter((ln) => !hdr.test(foldSearchText(ln.productName || '').trim())).map((ln) => ({ productName: ln.productName, qtyNeeded: ln.qtyNeeded, productCode: ln.productCode || '' }));
+  const mC = text.match(/Πελ[άα]της\s*[:：]\s*([^\n]+)/i), mO = text.match(/Παραγγελ\S*\s*(?:αρ\.?|No\.?|#|:)?\s*([A-Za-zΑ-Ω0-9-]*\d[A-Za-zΑ-Ω0-9-]*)/i);
+  pickImportMeta = { customer: res.customer || slip.customer || (mC ? mC[1].trim() : ''), orderRef: res.orderRef || slip.orderRef || (mO ? mO[1] : '') };
+  renderPickImportPreview();
+  setPickPhotoStatus(`✅ Βρέθηκαν ${pickImportLines.length} γραμμές — έλεγξε/διόρθωσε παρακάτω και πάτα δημιουργία.`);
+  try { document.getElementById('pickImportPreviewWrap').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* */ }
+}
+function reparsePickPhotoText() { const v = getVal('pickPhotoText'); if (v.trim()) applyPickOcrText(v); }

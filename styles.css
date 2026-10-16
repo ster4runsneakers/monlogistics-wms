@@ -2261,3 +2261,8 @@ body.portal-mode > *:not(#portalView):not(#toastContainer){display:none !importa
 .portal-item{display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding:.2rem 0;border-top:1px solid rgba(255,255,255,.06);font-size:.9rem}
 .portal-exp{font-size:.8rem;opacity:.85}.portal-exp.soon{color:#f59e0b;opacity:1}.portal-exp.expired{color:#ef4444;opacity:1}
 .portal-row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin:.35rem 0}.portal-row input{flex:1;min-width:180px;font-size:.75rem}
+
+/* set23 photo OCR */
+.pick-photo-box{display:flex;flex-direction:column;gap:.4rem;margin-bottom:.9rem;padding:.6rem;border:1px dashed rgba(16,185,129,.45);border-radius:10px}
+.pick-photo-box > label.btn{align-self:flex-start}
+.pick-photo-status{font-size:.85rem;font-weight:600}
