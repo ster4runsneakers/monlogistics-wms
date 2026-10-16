@@ -4359,12 +4359,117 @@ function labelPrintCss(size) {
   }`;
 }
 
+/* ---------- One-label-per-page printing (DYMO / thermal) in a dedicated iframe ---------- */
+function printerFromForm() {
+  // Current (possibly unsaved) form values, falling back to saved settings
+  const p = { ...appSettings.printer };
+  const t = getVal('setPrinterType'); if (t) p.type = t;
+  const w = parseFloat(getVal('setLabelW')); if (w > 0) p.width = w;
+  const h = parseFloat(getVal('setLabelH')); if (h > 0) p.height = h;
+  const o = getVal('setDymoOrient'); if (o) p.orient = o === 'portrait' ? 'portrait' : 'landscape';
+  const sc = document.getElementById('setShowCompanyOnLabels'); if (sc) p.showCompany = sc.checked;
+  const pr = getVal('setLabelPreset'); if (pr) p.labelPreset = pr;
+  return p;
+}
+
+function singleLabelPageGeometry(p) {
+  const w = +p.width, h = +p.height;
+  if (p.type === 'dymo') {
+    // DYMO driver paper is portrait: short side across the head, long side along feed
+    const pw = Math.min(w, h), ph = Math.max(w, h);
+    return { pw, ph, mode: p.orient === 'portrait' ? 'col' : 'rot' };
+  }
+  return { pw: w, ph: h, mode: w >= h ? 'row' : 'col' };
+}
+
+function singleLabelInnerHtml(sp, qrUrl, boxW, boxH, layout, company) {
+  const pad = Math.max(1.5, Math.min(3, Math.min(boxW, boxH) * 0.05));
+  const e = escapeHtml;
+  if (layout === 'row') {
+    const qr = Math.min(boxH - pad * 2, boxW * 0.5);
+    const tw = boxW - qr - pad * 3;
+    const code = Math.max(3.5, Math.min(boxH * 0.28, tw / (Math.max(4, String(sp.code).length) * 0.62)));
+    const lf = Math.max(2.2, Math.min(boxH * 0.1, 4.5));
+    return `<div class="lab" style="width:${boxW}mm;height:${boxH}mm;padding:${pad}mm;display:flex;flex-direction:row;align-items:center;gap:${pad}mm">
+      <img src="${e(qrUrl || '')}" style="width:${qr}mm;height:${qr}mm;flex:0 0 auto">
+      <div style="flex:1 1 auto;min-width:0;overflow:hidden">
+        ${company ? `<div style="font-size:${lf * 0.85}mm">${e(company)}</div>` : ''}
+        <div style="font-size:${code}mm;font-weight:800;line-height:1.05;white-space:nowrap">${e(sp.code)}</div>
+        ${(sp.lines || []).slice(0, 4).map((l) => `<div style="font-size:${lf}mm;line-height:1.2">${e(l)}</div>`).join('')}
+      </div></div>`;
+  }
+  // column: QR on top, text below
+  const qr = Math.min(boxW - pad * 2, boxH * 0.58);
+  const code = Math.max(3.5, Math.min(boxH * 0.13, (boxW - pad * 2) / (Math.max(4, String(sp.code).length) * 0.62)));
+  const lf = Math.max(2.2, Math.min(boxW * 0.08, 4.5));
+  return `<div class="lab" style="width:${boxW}mm;height:${boxH}mm;padding:${pad}mm;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:${pad * 0.7}mm;text-align:center">
+    <img src="${e(qrUrl || '')}" style="width:${qr}mm;height:${qr}mm;flex:0 0 auto">
+    <div style="font-size:${code}mm;font-weight:800;line-height:1.05;white-space:nowrap">${e(sp.code)}</div>
+    ${(sp.lines || []).slice(0, 3).map((l) => `<div style="font-size:${lf}mm;line-height:1.2">${e(l)}</div>`).join('')}
+    ${company ? `<div style="font-size:${lf * 0.85}mm">${e(company)}</div>` : ''}
+  </div>`;
+}
+
+async function buildSingleLabelDoc(specs, p) {
+  const { pw, ph, mode } = singleLabelPageGeometry(p);
+  const c = appSettings.company;
+  const company = p.showCompany && c.name ? c.name : '';
+  const urls = await Promise.all(specs.map((sp) => qrDataUrl(sp.qr, 400)));
+  const pages = specs.map((sp, i) => {
+    let inner;
+    if (mode === 'rot') {
+      // Landscape content (ph × pw) rotated 90° to fill the portrait page
+      inner = `<div style="position:absolute;top:0;left:0;width:${ph}mm;height:${pw}mm;transform-origin:0 0;transform:translateX(${pw}mm) rotate(90deg)">${singleLabelInnerHtml(sp, urls[i], ph, pw, 'row', company)}</div>`;
+    } else {
+      inner = singleLabelInnerHtml(sp, urls[i], pw, ph, mode, company);
+    }
+    return `<div class="pg">${inner}</div>`;
+  }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Labels</title><style>
+@page { size: ${pw}mm ${ph}mm; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: ${pw}mm; margin: 0; padding: 0; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.pg { position: relative; width: ${pw}mm; height: ${ph}mm; overflow: hidden; break-after: page; page-break-after: always; }
+.pg:last-child { break-after: auto; page-break-after: auto; }
+.lab { overflow: hidden; }
+img { display: block; image-rendering: pixelated; }
+</style></head><body>${pages}</body></html>`;
+}
+
+function printHtmlInIframe(html) {
+  return new Promise((resolve) => {
+    const old = document.getElementById('mlPrintFrame');
+    if (old) old.remove();
+    const fr = document.createElement('iframe');
+    fr.id = 'mlPrintFrame';
+    fr.setAttribute('aria-hidden', 'true');
+    fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+    document.body.appendChild(fr);
+    const doc = fr.contentWindow.document;
+    doc.open(); doc.write(html); doc.close();
+    const imgs = Array.from(doc.images);
+    Promise.all(imgs.map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; })))
+      .then(() => setTimeout(() => {
+        fr.contentWindow.focus();
+        fr.contentWindow.print();
+        setTimeout(() => { fr.remove(); resolve(); }, 60000);
+      }, 50));
+  });
+}
+
 let labelPrintBusy = false;
-async function printLabelsSized(specs) {
+async function printLabelsSized(specs, printerOverride) {
   if (!specs || !specs.length) { showToast('Δεν υπάρχουν ετικέτες', 'error'); return; }
   if (labelPrintBusy) return;
   labelPrintBusy = true;
   try {
+    const pr = printerOverride || appSettings.printer;
+    if (pr.type === 'dymo' || pr.type === 'thermal' || pr.type === 'other') {
+      if (specs.length > 30) showToast(`Προετοιμασία ${specs.length} ετικετών…`, 'success');
+      const html = await buildSingleLabelDoc(specs, pr);
+      printHtmlInIframe(html);
+      return;
+    }
     const size = getLabelSize();
     const printArea = document.getElementById('printArea');
     if (!printArea) return;
@@ -4405,7 +4510,7 @@ function printAllLocationLabels(zoneIndex) {
 function printTestLabel() {
   const z = (appSettings.zones || [])[1] || (appSettings.zones || [])[0];
   const code = z ? zoneLocationCodes(z)[Math.min(13, zoneLocationCodes(z).length - 1)] : 'Β-07-2';
-  printLabelsSized([locationCodeToLabelSpec(code)]);
+  printLabelsSized([locationCodeToLabelSpec(code)], printerFromForm());
 }
 
 /* ---------- Settings form ---------- */
