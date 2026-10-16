@@ -1,4 +1,4 @@
-const APP_VERSION = 'set14';
+const APP_VERSION = 'set15';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -1863,14 +1863,17 @@ function generateShelfGrid() {
 
   for (let i = from; i <= to; i++) {
     const shelfCode = `${zone}-${i < 10 ? '0' + i : i}`;
-    appendTagCard({
-      key: shelfCode,
-      title: `ΘΕΣΗ: ${escapeHtml(shelfCode)}`,
-      subtitle: '',
-      qrPayload: `SHELF:${shelfCode}`,
+    const zCfg = (appSettings.zones || []).find((x) => x.letter === zone);
+    const lv = zCfg ? zCfg.levels : 1;
+    const codes = lv <= 1 ? [shelfCode] : Array.from({ length: lv }, (_, k) => `${shelfCode}-${k + 1}`);
+    codes.forEach((c, k) => appendTagCard({
+      key: c,
+      title: `ΘΕΣΗ: ${escapeHtml(c)}`,
+      subtitle: lv > 1 ? escapeHtml(k === 0 ? 'Ύψος 1 · Πάτωμα' : `Ύψος ${k + 1}`) : '',
+      qrPayload: `SHELF:${c}`,
       footer: 'MONLOGISTICS WMS - SHELF TAG',
       aisle: false
-    });
+    }));
 
     if (includeAisle) {
       for (let row = 1; row <= 4; row++) {
@@ -5188,7 +5191,7 @@ loadCountState();
 
 
 /* ==========================================================================
-   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set14)
+   TAB 9: ΧΑΡΤΗΣ ΑΠΟΘΗΚΗΣ (set15)
    ========================================================================== */
 let mapSelected = null; // base code e.g. "Β-07"
 
