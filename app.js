@@ -1,4 +1,4 @@
-const APP_VERSION = 'set24';
+const APP_VERSION = 'set25';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
