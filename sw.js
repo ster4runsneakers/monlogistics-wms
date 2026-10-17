@@ -1,5 +1,5 @@
-// Minimal network-first SW (set25). Only same-origin GET; Firebase/Google untouched.
-const CACHE = 'mlw-set25';
+// Minimal network-first SW (set26). Only same-origin GET; Firebase/Google untouched.
+const CACHE = 'mlw-set26';
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(
   caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())

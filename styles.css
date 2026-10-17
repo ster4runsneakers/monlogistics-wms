@@ -2278,3 +2278,4 @@ body.auth-locked{overflow:hidden}
 .login-link{background:none;border:0;color:#a5b4fc;text-decoration:underline;cursor:pointer;font-size:.9rem}
 .login-msg{min-height:1.2em;margin:0;font-size:.9rem}
 .logout-btn{order:99}.logout-user{opacity:.6;font-size:.7rem}
+.nav-tab[hidden]{display:none!important}

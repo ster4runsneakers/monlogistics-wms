@@ -1,20 +1,43 @@
 rules_version = '2';
-// MonLogistics WMS — Firestore rules (set24).
-// Επικόλληση στο Firebase console → Firestore Database → Rules → Publish.
+// MonLogistics WMS — Firestore rules (set26): διαχειριστές + users/{email}.
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Βάλε εδώ τα email των υπαλλήλων (μικρά γράμματα).
-    function isStaff() {
-      return request.auth != null
-        && request.auth.token.email != null
-        && request.auth.token.email.lower() in [
-          'gskolarikis@gmail.com',
-          'sofisstore@gmail.com'
-          // , 'ypallilos@example.com'
-        ];
+    function myEmail() {
+      return request.auth != null && request.auth.token.email != null
+        ? request.auth.token.email.lower() : '';
     }
-    match /{document=**} {
-      allow read, write: if isStaff();
+    function isHardAdmin() {
+      return myEmail() in ['gskolarikis@gmail.com', 'sofisstore@gmail.com'];
     }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(myEmail()));
+    }
+    function isActiveUser() {
+      return myEmail() != ''
+        && exists(/databases/$(database)/documents/users/$(myEmail()))
+        && userDoc().data.active != false;
+    }
+    function isAdmin() {
+      return isHardAdmin() || (isActiveUser() && userDoc().data.role == 'admin');
+    }
+    function isStaff() { return isAdmin() || isActiveUser(); }
+
+    // Χρήστες: ο καθένας διαβάζει μόνο τον εαυτό του, γράφει μόνο ο διαχειριστής.
+    match /users/{email} {
+      allow read: if isAdmin() || email == myEmail();
+      allow write: if isAdmin();
+    }
+    // Παλέτες & picking: όλοι οι ενεργοί χρήστες.
+    match /pallets/{id} { allow read, write: if isStaff(); }
+    match /pickLists/{id} { allow read, write: if isStaff(); }
+    // Ρυθμίσεις/αποθήκες: διαβάζουν όλοι, γράφει ο διαχειριστής. Τιμές χρέωσης μόνο ο διαχειριστής.
+    match /settings/{id} {
+      allow read: if isAdmin() || (isStaff() && !id.matches('billing_.*'));
+      allow write: if isAdmin();
+    }
+    // Πύλη πελάτη: μόνο ο διαχειριστής.
+    match /clientPortals/{id} { allow read, write: if isAdmin(); }
+    // Οτιδήποτε άλλο: μόνο ο διαχειριστής.
+    match /{document=**} { allow read, write: if isAdmin(); }
   }
 }

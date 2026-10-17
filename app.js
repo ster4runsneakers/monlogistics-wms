@@ -1,4 +1,4 @@
-const APP_VERSION = 'set25';
+const APP_VERSION = 'set26';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -398,6 +398,7 @@ function updateStats() {
    NAVIGATION
    ========================================================================== */
 function switchTab(tabId) {
+  if (typeof currentRole !== 'undefined' && currentRole === 'staff' && ['tab-dash', 'tab-billing', 'tab-settings', 'tab-users'].includes(tabId)) tabId = 'tab-generate';
   if (typeof scanRouter !== 'undefined' && scanRouter) closeSharedCamera();
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
@@ -414,6 +415,7 @@ function switchTab(tabId) {
     activeBtn.classList.add('active');
   }
 
+  if (tabId === 'tab-users') { subscribeUsers(); renderUsersList(); }
   if (tabId === 'tab-picking') {
     renderPickTab();
   }
@@ -5960,25 +5962,150 @@ function setLoginMsg(t, ok) {
   const m = document.getElementById('loginMsg');
   if (m) { m.textContent = t || ''; m.style.color = ok ? '#4ade80' : '#f87171'; }
 }
+const ADMIN_EMAILS = ['gskolarikis@gmail.com', 'sofisstore@gmail.com'];
+let currentRole = null; // 'admin' | 'staff'
+let myUserUnsub = null;
+let usersUnsub = null;
+let appUsers = [];
+function isAdmin() { return currentRole === 'admin'; }
+function applyRoleUI() {
+  const admin = isAdmin();
+  document.body.classList.toggle('role-staff', !admin);
+  document.querySelectorAll('.nav-tab.admin-only').forEach((b) => { b.hidden = !admin; });
+  if (!admin) {
+    const act = document.querySelector('.tab-content.active');
+    if (act && ['tab-dash', 'tab-billing', 'tab-settings', 'tab-users'].includes(act.id)) switchTab('tab-generate');
+  }
+}
+function startDataListeners() {
+  if (authListenersStarted) return;
+  authListenersStarted = true;
+  subscribePallets(); subscribePickLists(); subscribeSettings(); subscribeWarehouses();
+}
+function denyAccess(msg) {
+  showLoginScreen(true);
+  setLoginMsg(msg);
+  try { firebase.auth().signOut(); } catch (e) { /* */ }
+}
 function startAuthGate() {
   if (!firebase.auth) { // auth script missing: keep old behaviour
-    subscribePallets(); subscribePickLists(); subscribeSettings(); subscribeWarehouses(); return;
+    currentRole = 'admin'; applyRoleUI(); startDataListeners(); return;
   }
   showLoginScreen(true);
   firebase.auth().onAuthStateChanged((user) => {
     const lbl = document.getElementById('logoutUser');
-    if (user) {
-      showLoginScreen(false);
-      if (lbl) lbl.textContent = user.email || '';
-      if (!authListenersStarted) {
-        authListenersStarted = true;
-        subscribePallets(); subscribePickLists(); subscribeSettings(); subscribeWarehouses();
-      }
-    } else {
+    if (myUserUnsub) { myUserUnsub(); myUserUnsub = null; }
+    if (!user) {
       if (authListenersStarted) { location.reload(); return; } // clean stop of all listeners
       showLoginScreen(true);
+      return;
     }
+    const email = String(user.email || '').toLowerCase();
+    if (lbl) lbl.textContent = email;
+    if (ADMIN_EMAILS.includes(email)) {
+      currentRole = 'admin'; applyRoleUI(); showLoginScreen(false); startDataListeners();
+      return;
+    }
+    // Υπάλληλος: πρέπει να υπάρχει ενεργό users/{email}. Αν σβηστεί → αποσύνδεση αμέσως.
+    myUserUnsub = firebase.firestore().collection('users').doc(email).onSnapshot((snap) => {
+      const d = snap.exists ? snap.data() : null;
+      if (!d || d.active === false) { denyAccess('Δεν έχεις πρόσβαση. Μίλα με τον διαχειριστή.'); return; }
+      currentRole = d.role === 'admin' ? 'admin' : 'staff';
+      applyRoleUI(); showLoginScreen(false); startDataListeners();
+    }, (err) => { console.error('users doc:', err); denyAccess('Δεν έχεις πρόσβαση. Μίλα με τον διαχειριστή.'); });
   });
+}
+
+/* ---------- set26: Χρήστες (μόνο διαχειριστής) ---------- */
+function getSecondaryAuth() {
+  const name = 'userAdmin';
+  const app = (firebase.apps || []).find((a) => a.name === name) || firebase.initializeApp(window.MONLOG_FIREBASE_CONFIG, name);
+  const a = app.auth();
+  try { a.setPersistence(firebase.auth.Auth.Persistence.NONE); } catch (e) { /* */ }
+  return a;
+}
+function setUsersMsg(t, ok) { const m = document.getElementById('uMsg'); if (m) { m.textContent = t || ''; m.style.color = ok ? '#16a34a' : '#dc2626'; } }
+function subscribeUsers() {
+  if (usersUnsub || !isAdmin() || typeof firebase === 'undefined') return;
+  usersUnsub = firebase.firestore().collection('users').onSnapshot((snap) => {
+    appUsers = []; snap.forEach((d) => appUsers.push({ id: d.id, ...d.data() }));
+    appUsers.sort((a, b) => a.id.localeCompare(b.id));
+    renderUsersList();
+  }, (err) => { console.error(err); setUsersMsg('Σφάλμα φόρτωσης χρηστών.'); });
+}
+function renderUsersList() {
+  const el = document.getElementById('usersList'); if (!el) return;
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const rows = ADMIN_EMAILS.map((e) => `<tr><td>${esc(e)}</td><td>—</td><td>Διαχειριστής (μόνιμος)</td><td>✅</td><td></td></tr>`);
+  appUsers.filter((u) => !ADMIN_EMAILS.includes(u.id)).forEach((u) => {
+    const id = esc(u.id);
+    rows.push(`<tr><td>${id}</td><td>${esc(u.name)}</td><td>
+      <select class="form-input" onchange="setAppUserRole('${id}', this.value)">
+        <option value="staff"${u.role !== 'admin' ? ' selected' : ''}>Υπάλληλος</option>
+        <option value="admin"${u.role === 'admin' ? ' selected' : ''}>Διαχειριστής</option></select></td>
+      <td>${u.active === false ? '⛔' : '✅'}</td>
+      <td style="white-space:nowrap">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="changeAppUserPassword('${id}')">🔑 Κωδικός</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="removeAppUser('${id}')">🗑️ Αφαίρεση</button>
+      </td></tr>`);
+  });
+  el.innerHTML = `<table class="inventory-table" style="width:100%"><thead><tr><th>Email</th><th>Όνομα</th><th>Ρόλος</th><th>Ενεργός</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+}
+async function addAppUser(ev) {
+  if (ev) ev.preventDefault();
+  if (!isAdmin()) return false;
+  const email = getVal('uEmail').trim().toLowerCase();
+  const pass = document.getElementById('uPass').value || '';
+  const name = getVal('uName').trim();
+  const role = getVal('uRole') === 'admin' ? 'admin' : 'staff';
+  if (!email || pass.length < 6) { setUsersMsg('Γράψε email και κωδικό με τουλάχιστον 6 χαρακτήρες.'); return false; }
+  setUsersMsg('Δημιουργία…', true);
+  const sec = getSecondaryAuth();
+  try {
+    try {
+      await sec.createUserWithEmailAndPassword(email, pass);
+    } catch (err) {
+      if (!String(err.code || '').includes('email-already-in-use')) throw err;
+      // Υπάρχει ήδη λογαριασμός (π.χ. είχε αφαιρεθεί): δοκίμασε με τον κωδικό που έγραψες.
+      try { await sec.signInWithEmailAndPassword(email, pass); } catch (e2) {
+        throw new Error('Το email υπάρχει ήδη με άλλο κωδικό. Γράψε τον παλιό κωδικό του ή σβήσε τον λογαριασμό από το Firebase → Authentication → Users και ξαναπρόσθεσέ τον.');
+      }
+    }
+    await firebase.firestore().collection('users').doc(email).set({ role, name, active: true, createdAt: new Date().toISOString(), createdBy: (firebase.auth().currentUser || {}).email || '' });
+    setUsersMsg(`✅ Ο χρήστης ${email} προστέθηκε. Μπορεί να συνδεθεί τώρα.`, true);
+    ['uEmail', 'uName', 'uPass'].forEach((i) => { const x = document.getElementById(i); if (x) x.value = ''; });
+  } catch (err) {
+    console.error(err);
+    setUsersMsg(err.code ? authErrorText(err).replace('Σφάλμα σύνδεσης', 'Σφάλμα') : err.message);
+  } finally { try { await sec.signOut(); } catch (e) { /* */ } }
+  return false;
+}
+function setAppUserRole(email, role) {
+  if (!isAdmin()) return;
+  firebase.firestore().collection('users').doc(email).update({ role: role === 'admin' ? 'admin' : 'staff' })
+    .then(() => showToast('Ο ρόλος άλλαξε', 'success')).catch((e) => { console.error(e); showToast('Σφάλμα αλλαγής ρόλου', 'error'); });
+}
+function removeAppUser(email) {
+  if (!isAdmin() || !confirm(`Αφαίρεση του ${email}; Θα χάσει αμέσως την πρόσβαση.`)) return;
+  firebase.firestore().collection('users').doc(email).delete()
+    .then(() => showToast('Ο χρήστης αφαιρέθηκε', 'success')).catch((e) => { console.error(e); showToast('Σφάλμα αφαίρεσης', 'error'); });
+}
+async function changeAppUserPassword(email) {
+  if (!isAdmin()) return;
+  const oldP = prompt(`Τρέχων κωδικός του ${email} (από το Bitwarden):`);
+  if (!oldP) return;
+  const newP = prompt('Νέος κωδικός (τουλάχιστον 6 χαρακτήρες):');
+  if (!newP) return;
+  if (newP.length < 6) { showToast('Ο κωδικός θέλει τουλάχιστον 6 χαρακτήρες', 'error'); return; }
+  const sec = getSecondaryAuth();
+  try {
+    const cred = await sec.signInWithEmailAndPassword(email, oldP);
+    await cred.user.updatePassword(newP);
+    showToast('✅ Ο κωδικός άλλαξε', 'success');
+  } catch (err) {
+    console.error(err);
+    alert('Δεν άλλαξε ο κωδικός: ' + authErrorText(err) + '\n\nΑν δεν ξέρεις τον τρέχοντα κωδικό: Firebase → Authentication → Users → ⋮ δίπλα στο email → Delete account, και μετά πρόσθεσέ τον ξανά εδώ με νέο κωδικό.');
+  } finally { try { await sec.signOut(); } catch (e) { /* */ } }
 }
 function doLogin(ev) {
   if (ev) ev.preventDefault();
@@ -5990,13 +6117,6 @@ function doLogin(ev) {
     .then(() => setLoginMsg(''))
     .catch((err) => setLoginMsg(authErrorText(err)));
   return false;
-}
-function doPasswordReset() {
-  const email = (document.getElementById('loginEmail').value || '').trim();
-  if (!email) { setLoginMsg('Γράψε πρώτα το email σου και πάτα ξανά «Ξέχασα τον κωδικό».'); return; }
-  firebase.auth().sendPasswordResetEmail(email)
-    .then(() => setLoginMsg('Σου στείλαμε email για νέο κωδικό. Κοίτα και στα Ανεπιθύμητα.', true))
-    .catch((err) => setLoginMsg(authErrorText(err)));
 }
 function doLogout() {
   if (!confirm('Αποσύνδεση;')) return;

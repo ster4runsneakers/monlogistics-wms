@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "target": "app",
+    "public": ".",
+    "ignore": ["firebase.json", ".firebaserc", "firestore.rules", "server.py", "**/.*", "**/node_modules/**", "*.md"],
+    "headers": [
+      { "source": "**/*.@(html|js|css|webmanifest)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+    ]
+  },
+  "firestore": { "rules": "firestore.rules" }
+}

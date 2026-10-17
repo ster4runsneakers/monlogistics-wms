@@ -1,0 +1,4 @@
+{
+  "projects": { "default": "monlogistics-16268" },
+  "targets": { "monlogistics-16268": { "hosting": { "app": ["monlogistics"] } } }
+}

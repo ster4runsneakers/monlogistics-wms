@@ -21,7 +21,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=set25">
+  <link rel="stylesheet" href="styles.css?v=set26">
 
   <!-- QR Code generator (unique data-URL PNGs per payload) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
@@ -93,20 +93,25 @@
           <span class="nav-label-full">9. Χάρτης</span>
           <span class="nav-label-short">9. Χάρτης</span>
         </button>
-        <button class="nav-tab" onclick="switchTab('tab-dash')">
+        <button class="nav-tab admin-only" onclick="switchTab('tab-dash')">
           <i data-lucide="layout-dashboard" style="width: 18px;"></i>
           <span class="nav-label-full">11. Πίνακας</span>
           <span class="nav-label-short">11. Πίνακας</span>
         </button>
-        <button class="nav-tab" onclick="switchTab('tab-billing')">
+        <button class="nav-tab admin-only" onclick="switchTab('tab-billing')">
           <i data-lucide="euro" style="width: 18px;"></i>
           <span class="nav-label-full">10. Χρέωση</span>
           <span class="nav-label-short">10. Χρέωση</span>
         </button>
-        <button class="nav-tab" onclick="switchTab('tab-settings')">
+        <button class="nav-tab admin-only" onclick="switchTab('tab-settings')">
           <i data-lucide="settings" style="width: 18px;"></i>
           <span class="nav-label-full">6. Ρυθμίσεις</span>
           <span class="nav-label-short">6. Ρυθμ.</span>
+        </button>
+        <button class="nav-tab admin-only" onclick="switchTab('tab-users')">
+          <i data-lucide="users" style="width: 18px;"></i>
+          <span class="nav-label-full">12. Χρήστες</span>
+          <span class="nav-label-short">12. Χρήστες</span>
         </button>
       </nav>
 
@@ -922,6 +927,22 @@
       </div>
     </section>
 
+    <section id="tab-users" class="tab-content">
+      <div class="glass-card">
+        <h2 class="card-title"><i data-lucide="users" style="color: var(--primary);"></i> Χρήστες</h2>
+        <p class="card-desc">Μόνο ο διαχειριστής βλέπει αυτή την οθόνη. Οι κωδικοί <strong>δεν</strong> αποθηκεύονται στην εφαρμογή — κράτα τους στο Bitwarden.</p>
+        <form class="users-form" onsubmit="return addAppUser(event)" style="display:grid;gap:.5rem;max-width:420px">
+          <input id="uEmail" type="email" class="form-input" placeholder="Email" autocomplete="off" required>
+          <input id="uName" type="text" class="form-input" placeholder="Όνομα (προαιρετικό)" autocomplete="off">
+          <input id="uPass" type="text" class="form-input" placeholder="Κωδικός (τουλάχιστον 6)" autocomplete="new-password" minlength="6" required>
+          <select id="uRole" class="form-input"><option value="staff">Υπάλληλος</option><option value="admin">Διαχειριστής</option></select>
+          <button type="submit" class="btn btn-primary">➕ Προσθήκη χρήστη</button>
+          <p id="uMsg" class="settings-hint"></p>
+        </form>
+        <div id="usersList" style="margin-top:1rem"></div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Area used for Clean Printing -->
@@ -932,11 +953,11 @@
       <label>Email<input id="loginEmail" type="email" autocomplete="username" class="form-input" required></label>
       <label>Κωδικός<input id="loginPass" type="password" autocomplete="current-password" class="form-input"></label>
       <button type="submit" class="login-submit">Σύνδεση</button>
-      <button type="button" class="login-link" onclick="doPasswordReset()">Ξέχασα τον κωδικό</button>
+      <p class="login-sub" style="font-size:12px;opacity:.75">Ξέχασες τον κωδικό; Ζήτα νέο από τον διαχειριστή.</p>
       <p id="loginMsg" class="login-msg"></p>
     </form>
   </div>
-  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set25</div>
+  <div id="appVersionTag" style="position:fixed;left:6px;bottom:4px;font-size:11px;color:#888;z-index:9999;pointer-events:none">v set26</div>
   <div id="printArea" style="display: none;"></div>
 
 
@@ -1008,7 +1029,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <!-- cache-bust: set1 -->
-  <script src="app.js?v=set25"></script>
+  <script src="app.js?v=set26"></script>
 <script>if('serviceWorker' in navigator){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}</script>
 </body>
 </html>
