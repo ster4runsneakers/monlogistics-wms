@@ -2266,3 +2266,15 @@ body.portal-mode > *:not(#portalView):not(#toastContainer){display:none !importa
 .pick-photo-box{display:flex;flex-direction:column;gap:.4rem;margin-bottom:.9rem;padding:.6rem;border:1px dashed rgba(16,185,129,.45);border-radius:10px}
 .pick-photo-box > label.btn{align-self:flex-start}
 .pick-photo-status{font-size:.85rem;font-weight:600}
+
+/* set24 login */
+.login-screen{position:fixed;inset:0;z-index:10000;background:#0f172a;display:flex;align-items:center;justify-content:center;padding:1rem}
+.login-screen[hidden]{display:none}
+body.auth-locked{overflow:hidden}
+.login-box{width:100%;max-width:360px;background:#1e293b;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:1.5rem;display:flex;flex-direction:column;gap:.8rem;color:#fff}
+.login-box h2{margin:0;font-size:1.4rem}.login-sub{margin:0;color:#94a3b8}
+.login-box label{display:flex;flex-direction:column;gap:.3rem;font-size:.85rem}
+.login-submit{padding:12px;border:0;border-radius:10px;background:#6366f1;color:#fff;font-weight:700;font-size:1rem;cursor:pointer}
+.login-link{background:none;border:0;color:#a5b4fc;text-decoration:underline;cursor:pointer;font-size:.9rem}
+.login-msg{min-height:1.2em;margin:0;font-size:.9rem}
+.logout-btn{order:99}.logout-user{opacity:.6;font-size:.7rem}

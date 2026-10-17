@@ -1,0 +1,20 @@
+rules_version = '2';
+// MonLogistics WMS — Firestore rules (set24).
+// Επικόλληση στο Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Βάλε εδώ τα email των υπαλλήλων (μικρά γράμματα).
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() in [
+          'gskolarikis@gmail.com',
+          'sofisstore@gmail.com'
+          // , 'ypallilos@example.com'
+        ];
+    }
+    match /{document=**} {
+      allow read, write: if isStaff();
+    }
+  }
+}

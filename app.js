@@ -1,4 +1,4 @@
-const APP_VERSION = 'set23';
+const APP_VERSION = 'set24';
 /**
  * MonLogistics - Warehouse Pallet & Shelf Manager (MVP)
  * Core Logic: LocalStorage Data Store, QR Code Generation, Scanning & Link Engine
@@ -317,10 +317,7 @@ function initFirebaseSync() {
     }
     db = firebase.firestore();
     cloudEnabled = true;
-    subscribePallets();
-    subscribePickLists();
-    subscribeSettings();
-    subscribeWarehouses();
+    startAuthGate();
     return true;
   } catch (e) {
     console.error("Firebase init failed:", e);
@@ -5938,3 +5935,70 @@ function applyPickOcrText(text) {
   try { document.getElementById('pickImportPreviewWrap').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* */ }
 }
 function reparsePickPhotoText() { const v = getVal('pickPhotoText'); if (v.trim()) applyPickOcrText(v); }
+
+
+/* ==========================================================================
+   set24: ΣΥΝΔΕΣΗ ΜΕ EMAIL (Firebase Auth). Listeners ξεκινούν μόνο μετά τη σύνδεση.
+   ========================================================================== */
+let authListenersStarted = false;
+function authErrorText(err) {
+  const c = (err && err.code) || '';
+  if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'Λάθος email ή κωδικός.';
+  if (c.includes('invalid-email')) return 'Το email δεν είναι σωστό.';
+  if (c.includes('too-many-requests')) return 'Πολλές προσπάθειες. Δοκίμασε ξανά σε λίγο.';
+  if (c.includes('network')) return 'Δεν υπάρχει σύνδεση στο internet.';
+  if (c.includes('unauthorized-domain')) return 'Το site δεν είναι εγκεκριμένο στο Firebase (Authorized domains).';
+  if (c.includes('operation-not-allowed')) return 'Η σύνδεση με email δεν έχει ενεργοποιηθεί στο Firebase.';
+  return 'Σφάλμα σύνδεσης: ' + (c || (err && err.message) || '');
+}
+function showLoginScreen(show) {
+  const el = document.getElementById('loginScreen');
+  if (el) el.hidden = !show;
+  document.body.classList.toggle('auth-locked', !!show);
+}
+function setLoginMsg(t, ok) {
+  const m = document.getElementById('loginMsg');
+  if (m) { m.textContent = t || ''; m.style.color = ok ? '#4ade80' : '#f87171'; }
+}
+function startAuthGate() {
+  if (!firebase.auth) { // auth script missing: keep old behaviour
+    subscribePallets(); subscribePickLists(); subscribeSettings(); subscribeWarehouses(); return;
+  }
+  showLoginScreen(true);
+  firebase.auth().onAuthStateChanged((user) => {
+    const lbl = document.getElementById('logoutUser');
+    if (user) {
+      showLoginScreen(false);
+      if (lbl) lbl.textContent = user.email || '';
+      if (!authListenersStarted) {
+        authListenersStarted = true;
+        subscribePallets(); subscribePickLists(); subscribeSettings(); subscribeWarehouses();
+      }
+    } else {
+      if (authListenersStarted) { location.reload(); return; } // clean stop of all listeners
+      showLoginScreen(true);
+    }
+  });
+}
+function doLogin(ev) {
+  if (ev) ev.preventDefault();
+  const email = (document.getElementById('loginEmail').value || '').trim();
+  const pass = document.getElementById('loginPass').value || '';
+  if (!email || !pass) { setLoginMsg('Γράψε email και κωδικό.'); return false; }
+  setLoginMsg('Σύνδεση…', true);
+  firebase.auth().signInWithEmailAndPassword(email, pass)
+    .then(() => setLoginMsg(''))
+    .catch((err) => setLoginMsg(authErrorText(err)));
+  return false;
+}
+function doPasswordReset() {
+  const email = (document.getElementById('loginEmail').value || '').trim();
+  if (!email) { setLoginMsg('Γράψε πρώτα το email σου και πάτα ξανά «Ξέχασα τον κωδικό».'); return; }
+  firebase.auth().sendPasswordResetEmail(email)
+    .then(() => setLoginMsg('Σου στείλαμε email για νέο κωδικό. Κοίτα και στα Ανεπιθύμητα.', true))
+    .catch((err) => setLoginMsg(authErrorText(err)));
+}
+function doLogout() {
+  if (!confirm('Αποσύνδεση;')) return;
+  if (typeof firebase !== 'undefined' && firebase.auth) firebase.auth().signOut();
+}
